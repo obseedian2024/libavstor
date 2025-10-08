@@ -1,0 +1,34 @@
+LIBRARY
+EXPORTS
+	DllMain
+	avstor_open
+	avstor_close
+	avstor_commit
+	avstor_node_init
+	avstor_node_destroy
+	avstor_find
+	avstor_create_key
+	avstor_create_string
+	avstor_create_binary
+	avstor_create_int32
+	avstor_create_int64
+	avstor_create_double
+	avstor_create_link
+	avstor_get_name
+	avstor_get_value
+	avstor_get_int32
+	avstor_get_int64
+	avstor_get_double
+	avstor_get_string
+	avstor_get_binary
+	avstor_get_link
+	avstor_get_type
+	avstor_update_int32
+	avstor_update_int64
+	avstor_update_double
+	avstor_update_string
+	avstor_update_binary
+	avstor_delete
+	avstor_inorder_first
+	avstor_inorder_next
+	avstor_get_errstr
