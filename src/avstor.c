@@ -507,7 +507,7 @@ static const char* err_codes[] =
 };
 
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
-static const NodeRef    NODEREF_NULL = { 0, 0 };
+static const NodeRef    NODEREF_NULL = { { 0, 0 } };
 #else 
 static const NodeRef    NODEREF_NULL = { 0 };
 #endif
@@ -1103,20 +1103,12 @@ static bool io_commit(int fid)
 
 static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
 {
-#if defined(__linux__) && defined(AVSTOR_CONFIG_FILE_64BIT)
-    return pread64(db->file, buf, count, (off64_t)pos);
-#else
     return pread(db->file, buf, count, (off_t)pos);
-#endif
 }
 
 static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
 {
-#if defined(__linux__) && defined(AVSTOR_CONFIG_FILE_64BIT)
-    return pwrite64(db->file, buf, count, (off64_t)pos);
-#else
     return pwrite(db->file, buf, count, (off_t)pos);
-#endif
 }
 
 #else 
