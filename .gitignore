@@ -361,4 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
-*.rbt
+
+# Test database files 
+*.db 
+
+# Nano swap files 
+*.swp
+
