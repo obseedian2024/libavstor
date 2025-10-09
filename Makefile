@@ -27,10 +27,16 @@ endif
 ifeq ($(RELEASE), 1)
 	CFLAGS += -DNDEBUG -O3 -g0
 else
-	CFLAGS += -DDEBUG -D_DEBUG -g3
+	CFLAGS += -D_DEBUG -g3
 endif
 
-all: $(LIB_FILE)
+all: $(OBJ_DIR) $(BIN_DIR) $(LIB_FILE)
+
+$(OBJ_DIR):
+	@mkdir -p $(OBJ_DIR)
+
+$(BIN_DIR):
+	@mkdir -p $(BIN_DIR)
 
 $(LIB_FILE): $(LIB_OBJS)
 	$(AR) rcs $@ $^
