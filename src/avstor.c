@@ -651,10 +651,10 @@ static __inline void atomic_store_int32_release__(volatile atomic_int32 *x, atom
 #endif
 
 #if defined(USE_WIN32_SRW_LOCKS)
-static __inline bool avmtx_init(AvMutex* avmtx)
+static __inline int avmtx_init(AvMutex* avmtx)
 {
     InitializeSRWLock(&avmtx->mtx);
-    return true;
+    return 1;
 }
 
 static __inline void avmtx_destroy(AvMutex* avmtx)
@@ -672,10 +672,10 @@ static __inline void avmtx_unlock(AvMutex* avmtx)
     ReleaseSRWLockExclusive(&avmtx->mtx);
 }
 
-static __inline bool avcnd_init(AvCnd* avcv)
+static __inline int avcnd_init(AvCnd* avcv)
 {
     InitializeConditionVariable(&avcv->cv);
-    return true;
+    return 1;
 }
 
 static __inline void avcnd_destroy(AvCnd* avcv)
@@ -683,24 +683,24 @@ static __inline void avcnd_destroy(AvCnd* avcv)
     memset(avcv, 0, sizeof(*avcv));
 }
 
-static __inline bool avcnd_wait(AvCnd* avcv, AvMutex* avmtx)
+static __inline int avcnd_wait(AvCnd* avcv, AvMutex* avmtx)
 {
     return SleepConditionVariableSRW(&avcv->cv, &avmtx->mtx, INFINITE, 0) == TRUE;
 }
 
-static __inline bool avcnd_signal(AvCnd* avcv)
+static __inline int avcnd_signal(AvCnd* avcv)
 {
     WakeConditionVariable(&avcv->cv);
-    return true;
+    return 1;
 }
 
-static __inline bool avcnd_broadcast(AvCnd* avcv)
+static __inline int avcnd_broadcast(AvCnd* avcv)
 {
     WakeAllConditionVariable(&avcv->cv);
-    return true;
+    return 1;
 }
 #elif defined(USE_C11_THREADS) 
-static __inline bool avmtx_init(AvMutex* avmtx)
+static __inline int avmtx_init(AvMutex* avmtx)
 {
     return mtx_init(&avmtx->mtx, mtx_plain) == thrd_success;
 }
@@ -721,7 +721,7 @@ static __inline void avmtx_unlock(AvMutex* avmtx)
     mtx_unlock(&avmtx->mtx);
 }
 
-static __inline bool avcnd_init(AvCnd* avcv)
+static __inline int avcnd_init(AvCnd* avcv)
 {
     return cnd_init(&avcv->cv) == thrd_success;
 }
@@ -732,22 +732,22 @@ static __inline void avcnd_destroy(AvCnd* avcv)
     memset(avcv, 0, sizeof(*avcv));
 }
 
-static __inline bool avcnd_wait(AvCnd* avcv, AvMutex* avmtx)
+static __inline int avcnd_wait(AvCnd* avcv, AvMutex* avmtx)
 {
     return cnd_wait(&avcv->cv, &avmtx->mtx) == thrd_success;
 }
 
-static __inline bool avcnd_signal(AvCnd* avcv)
+static __inline int avcnd_signal(AvCnd* avcv)
 {
     return cnd_signal(&avcv->cv) == thrd_success;
 }
 
-static __inline bool avcnd_broadcast(AvCnd* avcv)
+static __inline int avcnd_broadcast(AvCnd* avcv)
 {
     return cnd_broadcast(&avcv->cv) == thrd_success;
 }
 #endif
-static bool rwl_init(rwl_t *rwl)
+static int rwl_init(rwl_t *rwl)
 {
     rwl->lock = 0;
     if (avcnd_init(&rwl->cv)) {
@@ -757,13 +757,13 @@ static bool rwl_init(rwl_t *rwl)
         if (!avmtx_init(&rwl->mtx)) {
             goto err_mtx;
         }
-        return true;
+        return 1;
 err_mtx:
         avcnd_destroy(&rwl->cv_upgr);
 err_cv_upgr:
         avcnd_destroy(&rwl->cv);
     }
-    return false;
+    return 0;
 }
 
 static void rwl_destroy(rwl_t *rwl)
@@ -794,10 +794,10 @@ static void rwl_lock_exclusive(rwl_t *rwl)
     avmtx_unlock(&rwl->mtx);
 }
 
-static bool rwl_upgrade(rwl_t *rwl)
+static int rwl_upgrade(rwl_t *rwl)
 {
     int lock;
-    int result = false;
+    int result = 0;
     avmtx_lock(&rwl->mtx);
     if (!(rwl->lock & 1)) {
         lock = rwl->lock & ~1;
@@ -807,7 +807,7 @@ static bool rwl_upgrade(rwl_t *rwl)
             lock = rwl->lock & ~1;
         }
         rwl->lock = (lock == 2) ? -2 : lock;
-        result = true;
+        result = 1;
     }
     avmtx_unlock(&rwl->mtx);
     return result;
@@ -840,23 +840,23 @@ unlock_and_exit:
     avmtx_unlock(&rwl->mtx);
 }
 
-static bool rwl_upgrade_or_lock_exclusive(rwl_t *rwl)
+static int rwl_upgrade_or_lock_exclusive(rwl_t *rwl)
 {
     if (rwl_upgrade(rwl)) {
-        return true;
+        return 1;
     }
     rwl_release(rwl);
     rwl_lock_exclusive(rwl);
-    return false;
+    return 0;
 }
 
-static bool rwl_upgrade_or_release(rwl_t *rwl)
+static int rwl_upgrade_or_release(rwl_t *rwl)
 {
     if (rwl_upgrade(rwl)) {
-        return true;
+        return 1;
     }
     rwl_release(rwl);
-    return false;
+    return 0;
 }
 #else 
 #define rwl_init(rwl) (1)
@@ -940,23 +940,23 @@ static void avs_aligned_free(void *memblock)
     free((void*)((uintptr_t*)memblock)[-1]);
 }
 
-static bool bpool_init(BufferPool *bp, unsigned initial_capacity)
+static int bpool_init(BufferPool *bp, unsigned initial_capacity)
 {
     if (!avmtx_init(&bp->lock)) {
-        return false;
+        return 0;
     }
     bp->blocks = calloc((size_t)initial_capacity, sizeof(*bp->blocks));
     if (bp->blocks == NULL) {
-        return false;
+        return 0;
     }
     bp->blocks[0] = avs_aligned_malloc(DEFAULT_BLOCK_SIZE * 1024, PAGE_SIZE);
     if (bp->blocks[0] == NULL) {
-        return false;
+        return 0;
     }
     bp->count = 1;
     bp->next_page = 0;
     bp->capacity = initial_capacity;
-    return true;
+    return 1;
 }
 
 static void bpool_destroy(BufferPool *bp)
@@ -1028,12 +1028,12 @@ static int io_create(const char* filename, int oflags)
                     NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, NULL);
 }
 
-static bool io_close(int fid)
+static int io_close(int fid)
 {
     return CloseHandle((HANDLE)(intptr_t)fid);
 }
 
-static bool io_commit(int fid)
+static int io_commit(int fid)
 {
     return FlushFileBuffers((HANDLE)(intptr_t)fid);
 }
@@ -1089,12 +1089,12 @@ static int io_create(const char* filename, int oflags)
     return result < 0 ? AVSTOR_INVALID_HANDLE : result;
 }
 
-static bool io_close(int fid)
+static int io_close(int fid)
 {
     return close(fid) >= 0;
 }
 
-static bool io_commit(int fid)
+static int io_commit(int fid)
 {
     return fsync((int)fid) >= 0;
 }
@@ -1112,7 +1112,7 @@ static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
 }
 
 #else 
-static bool io_seek(int fid, avstor_off pos)
+static int io_seek(int fid, avstor_off pos)
 {
 #if !defined(AVSTOR_CONFIG_FILE_64BIT) || defined(__DOS__)
     return lseek(fid, (long)pos, SEEK_SET) >= 0;
@@ -1229,7 +1229,7 @@ static __inline void set_page_clean(AvPage *page)
     page->status &= ~PAGE_DIRTY;
 }
 
-static __inline bool is_page_dirty(AvPage *page)
+static __inline int is_page_dirty(AvPage *page)
 {
     return (page->status & PAGE_DIRTY) != 0;
 }
@@ -1305,19 +1305,19 @@ static unsigned mask_to_power_of_two(unsigned x)
 //    return 0;
 //}
 
-static bool avstor_init(avstor* db, unsigned szcache)
+static int avstor_init(avstor* db, unsigned szcache)
 {
     PageCache *cache;
     unsigned i;
     if (db == NULL) {
-        return false;
+        return 0;
     }
     if (!rwl_init(&db->global_rwl)) {
-        return false;
+        return 0;
     }
 #if defined(IO_REQUIRES_SYNC)
     if (!avmtx_init(&db->io_mtx)) {
-        return false;
+        return 0;
     }
 #endif
     db->l2_size = szcache;
@@ -1326,7 +1326,7 @@ static bool avstor_init(avstor* db, unsigned szcache)
     bpool_init(&db->bpool, 512 / DEFAULT_BLOCK_SIZE);
     cache->header = avs_aligned_malloc(PAGE_SIZE * 2, PAGE_SIZE);
     if (cache->header == NULL) {
-        return false;
+        return 0;
     }
     cache->old_header = PTR(cache->header, PAGE_SIZE);
     
@@ -1337,24 +1337,24 @@ static bool avstor_init(avstor* db, unsigned szcache)
 
     if (cache->rows == NULL) { // || cache->l2_pages == NULL) {
         avstor_destroy(db);
-        return false;
+        return 0;
     }
     for (i = 0; i < cache->l2_len; ++i) {
         if (!rwl_init(&cache->rows[i].lock)) {
-            return false;
+            return 0;
         }
         cache->rows[i].load_count = 1;
         cache->rows[i].capacity = L2_ASSOC;
         cache->rows[i].items = calloc(L2_ASSOC, sizeof(CacheItem));
         if (cache->rows[i].items == NULL) {
             avstor_destroy(db);
-            return false;
+            return 0;
         }
     }
-    return true;
+    return 1;
 }
 
-static bool read_page(avstor *db, avstor_off page_offset, AvPage *page)
+static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
 {
     //PageCache *cache = &avs->cache;
     uint32_t checksum;
@@ -1362,14 +1362,14 @@ static bool read_page(avstor *db, avstor_off page_offset, AvPage *page)
     numread = io_read(db, page, page_offset, PAGE_SIZE);
     if (0 == numread) {
         //THROW(AVSTOR_IOERR, "page offset beyond EOF.");
-        return false;
+        return 0;
     }
     else if (numread < 0) {
         //THROW(AVSTOR_IOERR, "fread failed.");
-        return false;
+        return 0;
     }
     else if (numread < PAGE_SIZE) {
-        return false;
+        return 0;
         //THROW(AVSTOR_CORRUPT, "fread read fewer than expected bytes.");
     }
     checksum = page->checksum;
@@ -1377,13 +1377,13 @@ static bool read_page(avstor *db, avstor_off page_offset, AvPage *page)
     if (checksum != compute_page_checksum(page)) {
         //THROW(AVSTOR_CORRUPT, "page checksum error.");
         page->checksum = checksum;
-        return false;
+        return 0;
     }
     page->checksum = checksum; // cache->l2_lru_count;
-    return true;
+    return 1;
 }
 
-static bool write_page(avstor *db, AvPage* page)
+static int write_page(avstor *db, AvPage* page)
 {
     assert(atomic_load_int32_relaxed(&page->lock_count) == 0);
     if (is_page_dirty(page)) {
@@ -1393,10 +1393,10 @@ static bool write_page(avstor *db, AvPage* page)
         res = io_write(db, page, page->page_offset, PAGE_SIZE);
         if (res < PAGE_SIZE) {
             set_page_dirty(page);
-            return false;
+            return 0;
         }
     }
-    return true;
+    return 1;
 }
 
 static __inline unsigned cache_get_row(PageCache *cache, avstor_off page_ofs)
@@ -1438,7 +1438,8 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
     CacheItem *poldest = NULL;
     unsigned col;
     uint32_t min_age = line->load_count;
-    bool auto_save = db->oflags & AVSTOR_OPEN_AUTOSAVE;
+    int auto_save = db->oflags & AVSTOR_OPEN_AUTOSAVE;
+
     /* Find oldest non-locked page */
     for (col = 0; col < line->capacity; ++col) {
         CacheItem* item = &line->items[col];
@@ -1454,7 +1455,7 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
     }
 
     if (poldest != NULL) {
-        if (is_page_dirty(poldest->page)) {            
+        if (is_page_dirty(poldest->page)) {
             if (auto_save) {
                 if (!write_page(db, poldest->page)) {
                     return evict_io_error;
@@ -1496,7 +1497,7 @@ static CacheItem* cache_line_realloc(avstor *db, CacheRow *line)
     return NULL;
 }
 
-static AvPage* cache_lookup(avstor *db, avstor_off page_ofs, bool is_existing)
+static AvPage* cache_lookup(avstor *db, avstor_off page_ofs, int is_existing)
 {
     PageCache *cache = &db->cache;
     CacheItem *item;
@@ -1658,9 +1659,9 @@ static __inline AvNode* get_node(AvPage *page, unsigned index)
 
 #if !defined (NDEBUG)
 
-static bool is_node_addr_valid(const avstor *db, const AvNode* node)
+static int is_node_addr_valid(const avstor *db, const AvNode* node)
 {
-    //return true;
+    //return 1;
     AvPage* page = get_ptr_page(node);
     (void)db;
     if (page == NULL) {
@@ -1672,10 +1673,10 @@ static bool is_node_addr_valid(const avstor *db, const AvNode* node)
     if (get_node(page, node->index) != node) {
         goto error_node;
     }
-    return true;
+    return 1;
 error_node:
     errout ("Node pointer is invalid.");
-    return false;
+    return 0;
 }
 #endif
 
@@ -1695,7 +1696,7 @@ static unsigned get_page_free_space(AvPage* page)
 
 static __inline AvPage* get_page(avstor *db, avstor_off page_offset)
 {
-    return cache_lookup(db, page_offset, true);
+    return cache_lookup(db, page_offset, 1);
 }
 
 static AvNode* lock_node(avstor *db, const avstor_off noderef)
@@ -2109,7 +2110,7 @@ static AvPage* create_page(avstor *db, unsigned type)
         THROW(AVSTOR_INVOPER, "Maximum allowable file size exceeded");
     }
     page_offset = (avstor_off)hdr->pagecount * (unsigned)PAGE_SIZE;
-    page = cache_lookup(db, page_offset, false);
+    page = cache_lookup(db, page_offset, 0);
     //memcpy(&page->id, &PAGE_ID, sizeof(PAGE_ID));
     page->type = (uint8_t)type;
     page->top = PAGE_SIZE;
@@ -2353,7 +2354,7 @@ static AvNode* find_key(avstor *db, const avstor_key *key, const NodeRef *rootre
 }
 
 /* Note that errors here are not YET recoverable */
-int AVCALL avstor_commit(avstor *db, bool flush)
+int AVCALL avstor_commit(avstor *db, int flush)
 {
     PageCache *cache;
     unsigned row, col;
@@ -3218,7 +3219,7 @@ static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
     hdr->flags = AVSTOR_FILE_64BIT;
 #endif
-    if (AVSTOR_OK != (result = avstor_commit(db, true))) {
+    if (AVSTOR_OK != (result = avstor_commit(db, 1))) {
         THROW(result, "Failed to initialize file");
     }   
 }
@@ -3310,7 +3311,7 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
     AvNode *volatile parent_node = NULL;
     AvNode *out_node = NULL;
     int result;
-    bool isvalue = (flags & AVSTOR_VALUES) != 0;
+    int isvalue = (flags & AVSTOR_VALUES);
     
     CHECK_PARAM(parent && parent->db && key && out_key);
     if (is_invalid_avstor_key(key) || (isvalue && parent->ref == 0)) {
@@ -3421,11 +3422,11 @@ int AVCALL avstor_get_type(const avstor_node* value, unsigned *out_type)
     return result;
 }
 
-static bool exists_link_to_node(avstor *db, AvNode *target)
+static int exists_link_to_node(avstor *db, AvNode *target)
 {
     AvNode *link_node;
     avstor_off link_ofs = get_ofs(target);
-    bool result;
+    int result;
     avstor_key link_key;
     link_key.buf = &link_ofs;
     link_key.len = sizeof(link_ofs);
@@ -3485,7 +3486,7 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
     NodeRef *volatile last_ref = NULL;
     NodeRef *rootref;
     int result;
-    bool isvalue = flags & AVSTOR_VALUES;
+    int isvalue = flags & AVSTOR_VALUES;
 
     CHECK_PARAM(parent && parent->db && key && key);
     if (is_invalid_avstor_key(key) || (isvalue && parent->ref == 0)) {
@@ -3564,19 +3565,19 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
 //    st->flags = flags;
 //}
 
-static __inline bool inorder_state_isempty(avstor_inorder *st)
+static __inline int inorder_state_isempty(avstor_inorder *st)
 {
     return st->top < 0;
 }
 
-static __inline bool inorder_state_push(avstor_inorder *st, avstor_off item)
+static __inline int inorder_state_push(avstor_inorder *st, avstor_off item)
 {
     if (st->top < AVSTOR_AVL_HEIGHT - 1) {
         st->ref[++st->top] = item;
-        return true;
+        return 1;
     }
     else {
-        return false;
+        return 0;
     }
 }
 
@@ -3596,7 +3597,7 @@ static avstor_off find_node_for_inorder(avstor_inorder *st, const avstor_key *ke
 {
     AvNode *cur = NULL;
     avstor_off result = 0;
-    bool is_descending = (st->flags & AVSTOR_DESCENDING) != 0;
+    int is_descending = (st->flags & AVSTOR_DESCENDING);
     avstor *db = st->db;
 
     if (ofs != 0) {
@@ -3604,7 +3605,7 @@ static avstor_off find_node_for_inorder(avstor_inorder *st, const avstor_key *ke
         cur = lock_node(db, ofs);
         comp = key->comparer(key->buf, cur->name);
 
-        while (true) {
+        while (1) {
             if (((is_descending ? -comp : comp) <= 0) && !inorder_state_push(st, ofs)) {
                 // Push node if greater than or equal to name
                 unlock_ptr(cur);
@@ -3629,7 +3630,7 @@ static avstor_off find_node_for_inorder(avstor_inorder *st, const avstor_key *ke
 static int inorder_next(avstor_inorder *st, avstor_off ofs, avstor_node *out_node)
 {
     AvNode *node = NULL;
-    bool is_descending = (st->flags & AVSTOR_DESCENDING);
+    int is_descending = (st->flags & AVSTOR_DESCENDING);
     while (st->top >= 0 || ofs != 0) {
         if (ofs != 0) {
             if (!inorder_state_push(st, ofs)) {
@@ -3660,7 +3661,7 @@ int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, c
     avstor *db;
     AvNode *volatile parent_node = NULL;
     int result;
-    bool isvalue = (flags & AVSTOR_VALUES) != 0;
+    int isvalue = (flags & AVSTOR_VALUES);
 
     CHECK_PARAM(st && parent && parent->db && out_node);
     if ((key && is_invalid_avstor_key(key)) || (isvalue && parent->ref == 0)) {

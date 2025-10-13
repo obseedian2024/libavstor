@@ -36,7 +36,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
 
 #if defined(_WINDLL)
 #if defined(AVCALL)
@@ -132,7 +131,7 @@ int AVCALL avstor_open(avstor **db, const char* filename, unsigned szcache, int 
 
 int AVCALL avstor_close(avstor *db);
 
-int AVCALL avstor_commit(avstor *db, bool flush);
+int AVCALL avstor_commit(avstor *db, int flush);
 
 int AVCALL avstor_node_init(avstor *db, avstor_node *node);
 
