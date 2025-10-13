@@ -368,3 +368,12 @@ FodyWeavers.xsd
 # Nano swap files 
 *.swp
 
+# Watcom intermediate files 
+*.mk
+*.lb1
+*.mk1 
+*.lib
+*.lk1
+*.map
+*.sym
+*.exe
