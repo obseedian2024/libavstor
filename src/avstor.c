@@ -956,7 +956,7 @@ static int bpool_init(BufferPool *bp, unsigned initial_capacity)
     bp->count = 1;
     bp->next_page = 0;
     bp->capacity = initial_capacity;
-    return 0;
+    return 1;
 }
 
 static void bpool_destroy(BufferPool *bp)
