@@ -1438,7 +1438,8 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
     CacheItem *poldest = NULL;
     unsigned col;
     uint32_t min_age = line->load_count;
-    bool auto_save = db->oflags & AVSTOR_OPEN_AUTOSAVE;
+    int auto_save = db->oflags & AVSTOR_OPEN_AUTOSAVE;
+
     /* Find oldest non-locked page */
     for (col = 0; col < line->capacity; ++col) {
         CacheItem* item = &line->items[col];
@@ -1454,7 +1455,7 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
     }
 
     if (poldest != NULL) {
-        if (is_page_dirty(poldest->page)) {            
+        if (is_page_dirty(poldest->page)) {
             if (auto_save) {
                 if (!write_page(db, poldest->page)) {
                     return evict_io_error;
