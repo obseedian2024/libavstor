@@ -62,20 +62,21 @@
 #include <io.h>
 #endif
 
-#if defined(AVSTOR_CONFIG_THREAD_SAFE) \
-&& ((defined(__STDC_VERSION__) && (__STDC_VERSION__ >=201112L)) || defined(AVSTOR_CONFIG_FORCE_C11_THREADS))
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+#if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >=201112L)) || defined(AVSTOR_CONFIG_FORCE_C11_THREADS)
 #include <stdatomic.h>
 #include <threads.h>
 #define USE_C11_THREADS 1
-
+ 
 #if defined(_WIN32) && (_WIN32_WINNT >= 0x0600) && !defined(AVSTOR_CONFIG_FORCE_C11_THREADS)
 // Under Vista+ use Win32 API SRW locks and condition variables instead of the much slower C11 
 // implementation. We don't need the recursion and timeout features anyway. 
 #define USE_WIN32_SRW_LOCKS 1
-#elif !defined(USE_C11_THREADS)
+#endif
+#else 
 #error Concurrency not supported on this platform.
 #endif
-#endif
+#endif 
 
 #if !defined(offsetof)
 #define offsetof(t, d)          ((size_t)&((t*)(0))->d)
@@ -1348,10 +1349,12 @@ static int avstor_init(avstor **pdb, unsigned szcache)
     }
 
     for (i = 0; i < cache->l2_len; ++i) {
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
         if (!rwl_init(&cache->rows[i].lock)) {
             avstor_destroy(db);
             return 0;
         }
+#endif
         cache->rows[i].load_count = 1;
         cache->rows[i].capacity = L2_ASSOC;
         if (!(cache->rows[i].items = calloc(L2_ASSOC, sizeof(CacheItem)))) {
