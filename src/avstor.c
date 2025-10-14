@@ -284,7 +284,7 @@ typedef struct {
     AvPage*             page;
     avstor_off          offset;
     uint32_t            load_time;
-} CacheItem; 
+} CacheItem;
 
 // Represents page data in the file
 struct AvPage {
@@ -305,7 +305,7 @@ struct AvPage {
 #if !defined(AVSTOR_CONFIG_FILE_64BIT)
     int32_t             pad_offset;
 #endif      
-    
+
     // bit field, PAGE_DIRTY denotes modified pages
     uint8_t             status;
 
@@ -426,7 +426,7 @@ typedef struct AvNode {
 } AvNode;
 
 // Key node
-struct AvKey {    
+struct AvKey {
     NodeRef             subkey_root;
     NodeRef             value_root;
     uint16_t            level;
@@ -945,18 +945,22 @@ static int bpool_init(BufferPool *bp, unsigned initial_capacity)
     if (!avmtx_init(&bp->lock)) {
         return 0;
     }
-    bp->blocks = calloc((size_t)initial_capacity, sizeof(*bp->blocks));
-    if (bp->blocks == NULL) {
-        return 0;
+    if (!(bp->blocks = calloc((size_t)initial_capacity, sizeof(*bp->blocks)))) {
+        goto err_calloc;
     }
-    bp->blocks[0] = avs_aligned_malloc(DEFAULT_BLOCK_SIZE * 1024, PAGE_SIZE);
-    if (bp->blocks[0] == NULL) {
-        return 0;
+    if (!(bp->blocks[0] = avs_aligned_malloc(DEFAULT_BLOCK_SIZE * 1024, PAGE_SIZE))) {
+        goto err_aligned_malloc;
     }
     bp->count = 1;
     bp->next_page = 0;
     bp->capacity = initial_capacity;
     return 1;
+err_aligned_malloc:
+    free(bp->blocks);
+    bp->blocks = NULL;
+err_calloc:
+    avmtx_destroy(&bp->lock);
+    return 0;
 }
 
 static void bpool_destroy(BufferPool *bp)
@@ -1021,7 +1025,7 @@ static int io_open(const char* filename, int oflags)
 }
 
 static int io_create(const char* filename, int oflags)
-{  
+{
     return (int)(intptr_t)(HANDLE)
         CreateFileA(filename, GENERIC_READ | GENERIC_WRITE,
                     (oflags & AVSTOR_OPEN_SHARED) ? FILE_SHARE_READ : 0,
@@ -1195,9 +1199,9 @@ static __inline void lock_page(AvPage *page)
 {
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
 #if !defined(NDEBUG)
-    int32_t prev = 
+    int32_t prev =
 #endif
-    atomic_inc_int32(&page->lock_count);
+        atomic_inc_int32(&page->lock_count);
     assert(prev >= 0);
 #else
     assert(page->lock_count >= 0);
@@ -1211,7 +1215,7 @@ static __inline void unlock_page(AvPage *page)
 #if !defined(NDEBUG)
     int32_t prev =
 #endif
-    atomic_dec_int32(&page->lock_count);
+        atomic_dec_int32(&page->lock_count);
     assert(prev > 0);
 #else
     assert(page->lock_count > 0);
@@ -1261,18 +1265,18 @@ static void avstor_destroy(avstor *db)
 {
     PageCache *cache = &db->cache;
     unsigned i;
-    if (cache->rows != NULL) {
+    if (cache->rows) {
         for (i = 0; i < cache->l2_len; ++i) {
-            rwl_lock_exclusive(&cache->rows[i].lock);
-            free(cache->rows[i].items);
-            cache->rows[i].items = NULL;
-            rwl_release(&cache->rows[i].lock);
+            if (cache->rows[i].items) {
+                free(cache->rows[i].items);
+                cache->rows[i].items = NULL;
+            }
             rwl_destroy(&cache->rows[i].lock);
         }
         free(cache->rows);
         cache->rows = NULL;
     }
-    if (db->cache.header != NULL) {
+    if (db->cache.header) {
         avs_aligned_free(db->cache.header);
         db->cache.header = NULL;
     }
@@ -1305,53 +1309,68 @@ static unsigned mask_to_power_of_two(unsigned x)
 //    return 0;
 //}
 
-static int avstor_init(avstor* db, unsigned szcache)
+static int avstor_init(avstor **pdb, unsigned szcache)
 {
     PageCache *cache;
+    avstor *db;
     unsigned i;
-    if (db == NULL) {
+
+    if (!(db = calloc(1, sizeof(*db)))) {
         return 0;
     }
-    if (!rwl_init(&db->global_rwl)) {
-        return 0;
-    }
-#if defined(IO_REQUIRES_SYNC)
-    if (!avmtx_init(&db->io_mtx)) {
-        return 0;
-    }
-#endif
+
     db->l2_size = szcache;
     cache = &db->cache;
-   
-    bpool_init(&db->bpool, 512 / DEFAULT_BLOCK_SIZE);
-    cache->header = avs_aligned_malloc(PAGE_SIZE * 2, PAGE_SIZE);
-    if (cache->header == NULL) {
-        return 0;
-    }
-    cache->old_header = PTR(cache->header, PAGE_SIZE);
-    
     cache->l2_len = db->l2_size / (KB_PER_PAGE * L2_ASSOC);
     cache->l2_mask = cache->l2_len - 1;
 
-    cache->rows = calloc(cache->l2_len, sizeof(CacheRow));
+    if (!rwl_init(&db->global_rwl)) {
+        goto err_rwl_init;
+    }
+#if defined(IO_REQUIRES_SYNC)
+    if (!avmtx_init(&db->io_mtx)) {
+        goto err_avmtx_init;
+    }
+#endif
 
-    if (cache->rows == NULL) { // || cache->l2_pages == NULL) {
+    if (!bpool_init(&db->bpool, 512 / DEFAULT_BLOCK_SIZE)) {
+        goto err_bpool_init;
+    }
+
+    if (!(cache->header = avs_aligned_malloc(PAGE_SIZE * 2, PAGE_SIZE))) {
         avstor_destroy(db);
         return 0;
     }
+    cache->old_header = PTR(cache->header, PAGE_SIZE);
+
+    if (!(cache->rows = calloc(cache->l2_len, sizeof(CacheRow)))) {
+        avstor_destroy(db);
+        return 0;
+    }
+
     for (i = 0; i < cache->l2_len; ++i) {
         if (!rwl_init(&cache->rows[i].lock)) {
+            avstor_destroy(db);
             return 0;
         }
         cache->rows[i].load_count = 1;
         cache->rows[i].capacity = L2_ASSOC;
-        cache->rows[i].items = calloc(L2_ASSOC, sizeof(CacheItem));
-        if (cache->rows[i].items == NULL) {
+        if (!(cache->rows[i].items = calloc(L2_ASSOC, sizeof(CacheItem)))) {
             avstor_destroy(db);
             return 0;
         }
     }
+    *pdb = db;
     return 1;
+err_bpool_init:
+#if defined(IO_REQUIRES_SYNC)
+    avmtx_destroy(&db->io_mtx);
+err_avmtx_init:
+#endif
+    rwl_destroy(&db->global_rwl);
+err_rwl_init:
+    free(db);
+    return 0;
 }
 
 static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
@@ -1524,7 +1543,7 @@ static AvPage* cache_lookup(avstor *db, avstor_off page_ofs, int is_existing)
         }
         // not in cache. Try to upgrade lock or retry lookup
     } while (!rwl_upgrade_or_release(&row->lock));
-    
+
     // At this point the cache line is locked exclusively
     if (first_empty_item != NULL) {
         item = first_empty_item;
@@ -1534,9 +1553,9 @@ static AvPage* cache_lookup(avstor *db, avstor_off page_ofs, int is_existing)
         }
         // Out of memory. We will have to evict.
     }
-    
+
     evict_result = cache_evict(db, row, &item);
-    
+
     if (evict_result != evict_success) {
         if (evict_result == evict_fail) {
             // This should almost never happen, maybe with exremely small cache sizes and many threads
@@ -1557,12 +1576,12 @@ static AvPage* cache_lookup(avstor *db, avstor_off page_ofs, int is_existing)
     }
 
 skip_evict:
-    
+
     page = item->page;
     if (is_existing) {
         // If looking for existing page, we can load it into the empty (or evicted) page        
         read_page(db, page_ofs, page);
-        item->load_time = row->load_count++;        
+        item->load_time = row->load_count++;
     }
     else {
         // Clear the evicted or newly allocated page
@@ -1571,7 +1590,7 @@ skip_evict:
         item->load_time = 0;
     }
     item->offset = page_ofs;
-    atomic_store_int32_release(&page->lock_count, 1);   
+    atomic_store_int32_release(&page->lock_count, 1);
     rwl_release(&row->lock);
     return page;
 }
@@ -1667,9 +1686,9 @@ static int is_node_addr_valid(const avstor *db, const AvNode* node)
     if (page == NULL) {
         goto error_node;
     }
-   /* if (memcmp(&page->id, &PAGE_ID, sizeof(PAGE_ID)) != 0) {
-        goto error_node;
-    }*/
+    /* if (memcmp(&page->id, &PAGE_ID, sizeof(PAGE_ID)) != 0) {
+         goto error_node;
+     }*/
     if (get_node(page, node->index) != node) {
         goto error_node;
     }
@@ -1687,11 +1706,11 @@ static __inline void set_node_size(AvNode* node, unsigned nodesz)
 
 static unsigned get_page_free_space(AvPage* page)
 {
-    unsigned top = page->top;    
+    unsigned top = page->top;
     unsigned bottom = align_node(  //compensate for alignment
-        offsetof(AvPage, index[page->index_count])
-        + (page->index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated      
-    return (top > bottom) ? top - bottom : 0;    
+                                 offsetof(AvPage, index[page->index_count])
+                                 + (page->index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated      
+    return (top > bottom) ? top - bottom : 0;
 }
 
 static __inline AvPage* get_page(avstor *db, avstor_off page_offset)
@@ -1800,7 +1819,7 @@ static AvNode* find_node_with_backtrace(avstor *db, const avstor_key *key, AvSta
                     cur = NULL;
                     break;
                 }
-            }            
+            }
             cur = lock_node_ex(db, ref);
         }
         unlock_ptr(ref);
@@ -2063,7 +2082,7 @@ static void remove_node(avstor *db, AvNode *node, AvStack *st)
         AvNode* topdel_node;
         int delpos;
         top = backtrace_push(st);
-        assert(top != NULL);     
+        assert(top != NULL);
         top->noderef = get_ofs(node);
         top->comp = 1;
         ref = &node->right;
@@ -2155,7 +2174,7 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
             }
             db->cache.header->page_pool[page_pool] = (uint32_t)(page->page_offset / PAGE_SIZE);
         }
-    }   
+    }
 
     nextfree = page->index_freelist;
     //set_page_dirty(page);
@@ -2188,11 +2207,11 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
     AvPage *page;
     AvNode *next, *dest, *cur, *src;
     unsigned oldsize, page_free, newtop, count;
-    
+
     assert((newsize == 0 || newsize >= sizeof(AvNode)) && newsize == align_node(newsize));
 
     oldsize = get_node_size(node);
-    if (newsize == oldsize) {       
+    if (newsize == oldsize) {
         return node;
     }
     page = get_ptr_page(node);
@@ -2231,7 +2250,7 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
     }
     // Adjust index offsets
     cur = dest;
-    while (cur < next) {       
+    while (cur < next) {
         uint16_t* curslot = (uint16_t*)PTR(page, cur->index);
         *curslot = (uint16_t)((int)*curslot + ((int)oldsize - (int)newsize));
         assert(is_node_addr_valid(NULL, cur));
@@ -2255,7 +2274,7 @@ static void delete_node(avstor *db, AvNode *node, AvStack *st)
 static AvNode* create_node(avstor *db, AvPage *preferred_page, const avstor_key *key,
                            unsigned szvalue, unsigned type, unsigned level)
 {
-    AvNode *node;   
+    AvNode *node;
 
     // Offset of the fixed portion
     // Size of header + length of name (including null termination), aligned
@@ -2276,7 +2295,7 @@ static AvNode* create_node(avstor *db, AvPage *preferred_page, const avstor_key 
     node->right = NODEREF_NULL;
     node->szname = (uint8_t)(data_ofs - SIZE_NODE_HDR);
     memcpy(&node->name, key->buf, key->len);
-    
+
     return node;
 }
 
@@ -2323,14 +2342,14 @@ static void insert_node(avstor *db, AvNode *item, AvStack *st)
         assert(is_nref_empty(*ref));
 
         set_nref(item, ref);
-        set_bf(item, 0);       
+        set_bf(item, 0);
         unlock_ptr(cur);
         // trace back on the stack of ancestors and rebalance
         balance_down(db, st);
     }
     else {
         set_nref(item, st->root);
-        set_bf(item, 0);       
+        set_bf(item, 0);
     }
 }
 
@@ -2382,7 +2401,7 @@ int AVCALL avstor_commit(avstor *db, int flush)
         }
         write_page(db, cache->header);
         if (flush && !io_commit(db->file)) {
-            THROW(AVSTOR_IOERR, "commit() failed"); 
+            THROW(AVSTOR_IOERR, "commit() failed");
         }
         // save header for rollback purposes
         memcpy(cache->old_header, cache->header, PAGE_SIZE);
@@ -2520,9 +2539,9 @@ int AVCALL avstor_create_key(const avstor_node *parent, const avstor_key *key, a
     {
         AvStack st;
         NodeRef *rootref;
-        AvNodeData *ndata;        
+        AvNodeData *ndata;
         if (parent->ref != 0) {
-            AvNodeData *pdata;           
+            AvNodeData *pdata;
             parent_node = lock_keyref(parent);
             pdata = get_node_data(parent_node);
             level = pdata->vkey.level + 1;
@@ -2569,7 +2588,7 @@ int AVCALL avstor_create_key(const avstor_node *parent, const avstor_key *key, a
 }
 
 static int create_var_value(const avstor_node *parent, const avstor_key *key,
-                          const void *value, unsigned valuesz, unsigned type, avstor_node *out_value)
+                            const void *value, unsigned valuesz, unsigned type, avstor_node *out_value)
 {
     avstor *db;
     AvNode *volatile node = NULL, *volatile parent_node = NULL;
@@ -2595,7 +2614,7 @@ static int create_var_value(const avstor_node *parent, const avstor_key *key,
             unlock_ptr(fnode);
             THROW(AVSTOR_EXISTS, MSG_NODE_EXISTS);
         }
-        
+
         node = create_node(db, get_ptr_page(last_ref), key, valuesz, type, pdata->vkey.level);
         ndata = get_node_data(node);
         ndata->vvar.length = (uint8_t)valuesz;
@@ -2616,14 +2635,14 @@ static int create_var_value(const avstor_node *parent, const avstor_key *key,
         unlock_ptr_checked(parent_node);
         rollback(db);
         result = ex.err;
-    }   
+    }
     END_TRY(ex);
     rwl_release(&db->global_rwl);
     return result;
 }
 
 int AVCALL avstor_create_string(const avstor_node *parent, const avstor_key *key,
-                            const char *value, avstor_node *out_value)
+                                const char *value, avstor_node *out_value)
 {
     size_t len;
     CHECK_PARAM(value);
@@ -2635,7 +2654,7 @@ int AVCALL avstor_create_string(const avstor_node *parent, const avstor_key *key
 }
 
 int AVCALL avstor_create_binary(const avstor_node *parent, const avstor_key *key,
-                             const void *value, size_t szvalue, avstor_node *out_value)
+                                const void *value, size_t szvalue, avstor_node *out_value)
 {
     if (szvalue > MAX_BINARY_LEN) {
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
@@ -2644,7 +2663,7 @@ int AVCALL avstor_create_binary(const avstor_node *parent, const avstor_key *key
 }
 
 int AVCALL avstor_create_int32(const avstor_node *parent, const avstor_key *key,
-                       int32_t value, avstor_node *out_value)
+                               int32_t value, avstor_node *out_value)
 {
     avstor *db;
     AvNode *volatile node = NULL, *volatile parent_node = NULL;
@@ -2661,7 +2680,7 @@ int AVCALL avstor_create_int32(const avstor_node *parent, const avstor_key *key,
     {
         AvStack st;
         AvNode *fnode;
-        AvNodeData *pdata;       
+        AvNodeData *pdata;
         parent_node = lock_keyref(parent);
         pdata = get_node_data(parent_node);
 
@@ -2669,7 +2688,7 @@ int AVCALL avstor_create_int32(const avstor_node *parent, const avstor_key *key,
             unlock_ptr(fnode);
             THROW(AVSTOR_EXISTS, MSG_NODE_EXISTS);
         }
-        
+
         node = create_node(db, get_ptr_page(last_ref), key, 0, AVSTOR_TYPE_INT32, pdata->vkey.level);
         get_node_data(node)->v32.value = value;
         insert_node(db, node, &st);
@@ -2688,14 +2707,14 @@ int AVCALL avstor_create_int32(const avstor_node *parent, const avstor_key *key,
         unlock_ptr_checked(parent_node);
         rollback(db);
         result = ex.err;
-    }   
+    }
     END_TRY(ex);
     rwl_release(&db->global_rwl);
     return result;
 }
 
 static int create_fixed64_value(const avstor_node *parent, const avstor_key *key,
-                            int64_t value, unsigned type, avstor_node *out_value)
+                                int64_t value, unsigned type, avstor_node *out_value)
 {
     avstor *db;
     AvNode *volatile node = NULL, *volatile parent_node = NULL;
@@ -2738,20 +2757,20 @@ static int create_fixed64_value(const avstor_node *parent, const avstor_key *key
         unlock_ptr_checked(parent_node);
         rollback(db);
         result = ex.err;
-    }   
+    }
     END_TRY(ex);
     rwl_release(&db->global_rwl);
     return result;
 }
 
 int AVCALL avstor_create_int64(const avstor_node *parent, const avstor_key *key,
-                            int64_t value, avstor_node *out_value)
+                               int64_t value, avstor_node *out_value)
 {
     return create_fixed64_value(parent, key, value, AVSTOR_TYPE_INT64, out_value);
 }
 
 int AVCALL avstor_create_double(const avstor_node *parent, const avstor_key *key,
-                            double value, avstor_node *out_value)
+                                double value, avstor_node *out_value)
 {
     AvValue64 v;
     v.as_dbl = value;
@@ -2800,11 +2819,11 @@ static void create_backlink(avstor *db, AvStack *st, avstor_off link, avstor_off
         unlock_ptr_checked(link_node);
         unlock_ptr_checked(node);
     }
-    END_TRY(ex);   
+    END_TRY(ex);
 }
 
 int AVCALL avstor_create_link(const avstor_node *parent, const avstor_key *key,
-                                const avstor_node *target, avstor_node *out_value)
+                              const avstor_node *target, avstor_node *out_value)
 {
     avstor *db;
     AvNode *volatile node = NULL, *volatile parent_node = NULL;
@@ -2870,7 +2889,7 @@ int AVCALL avstor_get_int32(const avstor_node *value, int32_t *out_val)
     TRY(ex)
     {
         node = lock_valueref(value, AVSTOR_TYPE_INT32);
-       
+
         *out_val = get_node_data(node)->v32.value;
         unlock_ptr(node);
         result = AVSTOR_OK;
@@ -2895,7 +2914,7 @@ static int get_fixed64_value(const avstor_node *value, unsigned type, int64_t *o
     TRY(ex)
     {
         node = lock_valueref(value, type);
-       
+
         memcpy(out_val, &get_node_data(node)->v64.value, sizeof(int64_t));
         unlock_ptr(node);
         result = AVSTOR_OK;
@@ -2922,7 +2941,7 @@ int AVCALL avstor_get_double(const avstor_node *value, double *out_val)
 
 static int get_var_value(const avstor_node* value, void* buf,
                          size_t szbuf, unsigned type, size_t *out_bytes, uint32_t *out_length)
-{  
+{
     AvNode *volatile node = NULL;
     int result;
 
@@ -2952,7 +2971,7 @@ static int get_var_value(const avstor_node* value, void* buf,
 }
 
 int AVCALL avstor_get_string(const avstor_node* value, char* buf,
-                          size_t szbuf, uint32_t *out_length)
+                             size_t szbuf, uint32_t *out_length)
 {
     size_t out_bytes = 0;
     int res = get_var_value(value, buf, szbuf, AVSTOR_TYPE_STRING, &out_bytes, out_length);
@@ -2970,7 +2989,7 @@ int AVCALL avstor_get_string(const avstor_node* value, char* buf,
 }
 
 int AVCALL avstor_get_binary(const avstor_node* value, void* buf,
-                          size_t szbuf, size_t *out_bytes, uint32_t *out_length)
+                             size_t szbuf, size_t *out_bytes, uint32_t *out_length)
 {
     return get_var_value(value, buf, szbuf, AVSTOR_TYPE_BINARY, out_bytes, out_length);
 }
@@ -3002,8 +3021,8 @@ int AVCALL avstor_get_link(const avstor_node *value, avstor_node *out_target)
 }
 
 int AVCALL avstor_get_value(const avstor_node* value, void* buf,
-                         size_t szbuf, unsigned *out_type, size_t *out_bytes, uint32_t *out_length)
-{   
+                            size_t szbuf, unsigned *out_type, size_t *out_bytes, uint32_t *out_length)
+{
     AvNode *volatile node = NULL;
     int result;
 
@@ -3114,7 +3133,7 @@ int AVCALL avstor_update_double(const avstor_node *value, double new_val)
 }
 
 static int update_var_value(const avstor_node* value, const void* buf,
-                         unsigned szbuf, unsigned type)
+                            unsigned szbuf, unsigned type)
 {
     AvNode *volatile node = NULL;
     int result;
@@ -3221,7 +3240,7 @@ static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
 #endif
     if (AVSTOR_OK != (result = avstor_commit(db, 1))) {
         THROW(result, "Failed to initialize file");
-    }   
+    }
 }
 
 int AVCALL avstor_open(avstor **pdb, const char* filename, unsigned szcache, int oflags)
@@ -3245,18 +3264,11 @@ int AVCALL avstor_open(avstor **pdb, const char* filename, unsigned szcache, int
         szcache = 512;
     }
 #endif
-
-    db = calloc(1, sizeof(*db));
-    if (db == NULL) {
+    if (!avstor_init(&db, szcache)) {
         RETURN(AVSTOR_NOMEM, MSG_OUT_OF_MEMORY);
     }
 
     db->oflags = oflags;
-
-    if (!avstor_init(db, szcache)) {
-        free(db);
-        RETURN(AVSTOR_NOMEM, MSG_OUT_OF_MEMORY);
-    }
 
     TRY(ex)
     {
@@ -3282,38 +3294,23 @@ int AVCALL avstor_close(avstor *db)
 {
     CHECK_PARAM(db);
     if (db->file != AVSTOR_INVALID_HANDLE) {
-        io_close(db->file);        
+        io_close(db->file);
         db->file = AVSTOR_INVALID_HANDLE;
     }
-    /*printf("Block count: %u\n", avs->bpool.count);
-    for (row = 0; row < avs->cache.l2_len; ++row) {
-        CacheRow *line = &avs->cache.rows[row];
-        unsigned empty = 0;
-        for (col = 0; col < line->capacity; ++col) {
-            if (line->items[col].page == NULL) {
-                pages++;
-                empty++;
-            }
-        }
-        if (empty) {
-            printf("Found %u empty columns in row %u\n",empty, row);
-        }
-    }
-    printf("Page count: %u\n", pages);*/
-   // printf("Cache hit ratio   : %f\n", (double)avs->cache.l2_hits * 100.0 / (double)avs->cache.l2_lookups);   
+
     avstor_destroy(db);
     return AVSTOR_OK;
 }
 
 int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
-                    int flags, avstor_node *out_key)
+                       int flags, avstor_node *out_key)
 {
     avstor *db;
     AvNode *volatile parent_node = NULL;
     AvNode *out_node = NULL;
     int result;
     int isvalue = (flags & AVSTOR_VALUES);
-    
+
     CHECK_PARAM(parent && parent->db && key && out_key);
     if (is_invalid_avstor_key(key) || (isvalue && parent->ref == 0)) {
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
@@ -3335,7 +3332,7 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
         }
 
         out_node = find_key(db, key, ref);
-        if (out_node != NULL) {            
+        if (out_node != NULL) {
             if (out_node != NULL) {
                 avstor_node_set(out_key, get_ofs(out_node), db);
             }
@@ -3344,7 +3341,7 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
         }
         else {
             result = AVSTOR_NOTFOUND;
-        }       
+        }
         unlock_ptr_checked(parent_node);
     }
     CATCH_ANY(ex)
@@ -3374,7 +3371,7 @@ int AVCALL avstor_get_name(const avstor_node *value, avstor_key *key)
     {
         size_t szname;
         node = lock_noderef(value);
-        szname = node->szname;        
+        szname = node->szname;
         if (szname > key->len) {
             THROW(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
         }
@@ -3480,7 +3477,7 @@ static void delete_backlink(avstor *db, AvNode *node)
 }
 
 int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key *key)
-{    
+{
     AvStack st;
     avstor *db;
     AvNode *volatile node = NULL, *volatile parent_node = NULL;
@@ -3496,7 +3493,7 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
     db = parent->db;
     TRY(ex)
     {
-        while (1) {           
+        while (1) {
             rwl_lock_shared(&db->global_rwl);
             if (parent->ref != 0) {
                 parent_node = lock_keyref(parent);
@@ -3558,7 +3555,7 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
     END_TRY(ex);
     rwl_release(&db->global_rwl);
     return result;
- }
+}
 
 //static __inline void inorder_state_init(avstor_inorder *st, int flags)
 //{
@@ -3611,7 +3608,7 @@ static avstor_off find_node_for_inorder(avstor_inorder *st, const avstor_key *ke
                 // Push node if greater than or equal to name
                 unlock_ptr(cur);
                 THROW(AVSTOR_CORRUPT, MSG_BACKTRACE_OVERFLOW);
-            }           
+            }
             if (comp == 0) {
                 result = ofs;
                 break;  // Node found
@@ -3658,7 +3655,7 @@ static int inorder_next(avstor_inorder *st, avstor_off ofs, avstor_node *out_nod
 
 int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, const avstor_key *key,
                                 int flags, avstor_node *out_node)
-{   
+{
     avstor *db;
     AvNode *volatile parent_node = NULL;
     int result;
@@ -3667,7 +3664,7 @@ int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, c
     CHECK_PARAM(st && parent && parent->db && out_node);
     if ((key && is_invalid_avstor_key(key)) || (isvalue && parent->ref == 0)) {
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
-    }    
+    }
     db = parent->db;
 
     st->db = db;
@@ -3724,7 +3721,7 @@ int AVCALL avstor_inorder_next(avstor_inorder *st, avstor_node *out_node)
 {
     AvNode *volatile node = NULL;
     int result;
-    
+
     CHECK_PARAM(st && out_node);
     if (inorder_state_isempty(st)) {
         avstor_node_set(out_node, 0, st->db);
@@ -3738,7 +3735,7 @@ int AVCALL avstor_inorder_next(avstor_inorder *st, avstor_node *out_node)
         ofs = nref_to_ofs((st->flags & AVSTOR_DESCENDING) ? node->left : node->right);
         unlock_ptr(node);
         node = NULL;
-        result = inorder_next(st, ofs, out_node);        
+        result = inorder_next(st, ofs, out_node);
     }
     CATCH_ANY(ex)
     {
@@ -3790,7 +3787,7 @@ BOOL WINAPI DllMain(
         data = malloc(sizeof(*data));
         if (data == NULL || !TlsSetValue(tls_idx, data)) {
             return FALSE;
-        }       
+        }
         init_tls_vars();
         break;
     case DLL_THREAD_DETACH:
