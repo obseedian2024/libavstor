@@ -3240,8 +3240,9 @@ int AVCALL avstor_open(avstor **pdb, const char* filename, unsigned szcache, int
         RETURN(AVSTOR_PARAM, MSG_INVALID_ATTRIBUTE);
     }
 #if defined(DOS16)
+    /* 16-bit DOS limited to 512K of cache since it has to be in conventional memory */
     if (szcache > 512) {
-        RETURN(AVSTOR_PARAM, MSG_INVALID_ATTRIBUTE);
+        szcache = 512;
     }
 #endif
 
