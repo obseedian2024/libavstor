@@ -129,20 +129,36 @@ close_and_return:
     return total_nodes;
 }
 
+static void show_copyright(void)
+{
+    printf("libavstor Test Database Creation Utility\n"
+           "BSD 3-Clause License\n"
+           "Copyright (c) 2025 Tamas Fejerpataky\n"
+           "See project at https://github.com/obseedian2024/libavstor\n\n");
+}
+
+static void show_help(void)
+{
+    printf("Usage: avscrdb <filename> # [#...]\n"
+           "\twhere # [#...] is a list of space-separated integers specifying the\n"
+           "\tnumber of keys in each subtree of the level, with the top level\n"
+           "\tbeing mandatory.\n\n"
+           "Example: avcrdb test.db 100 50 200\n"
+           "\twill create a file called test.db with a hierarchy of 3 levels,\n"
+           "\t100 nodes in the first level, each of those nodes having 50\n"
+           "\tchildren each, and each of those having 200 children.\n");
+}
+
 int main(int argc, char *argv[])
 {
     char *filename;
     long *levels, nodes_created, nodes_expected, nodes_per_level;
     int num_levels, i;
+
+    show_copyright();
+
     if (argc < 3) {
-        printf("Usage: avscrdb <filename> # [#...]\n"
-               "\twhere # [#...] is a list of space-separated integers specifying the\n"
-               "\tnumber of keys in each subtree of the level, with the top level\n"
-               "\tbeing mandatory.\n\n"
-               "Example: avcrdb test.db 100 50 200\n"
-               "\twill create a file called test.db with a hierarchy of 3 levels,\n"
-               "\t100 nodes in the first level, each of those nodes having 50\n"
-               "\tchildren each, and each of those having 200 children.\n");
+        show_help();
         return 0;
     }
     filename = argv[1];
