@@ -44,10 +44,14 @@
 
 #define PAGE_SIZE               4096
 #define L2_ASSOC                8
-#if defined(__I86__)
-#define DEFAULT_BLOCK_SIZE      32u
-#else
-#define DEFAULT_BLOCK_SIZE      64u
+
+#if defined(__I86__) || defined(M_I86) || defined(_M_I86) 
+#if !defined(__I86__)
+#define __I86__ 1
+#endif
+#define DEFAULT_BLOCK_SIZE      (64u - 8u)
+#else 
+#define DEFAULT_BLOCK_SIZE      256u
 #endif
 
 #if defined(_WIN32)
@@ -108,22 +112,16 @@
 #if !defined(__DOS__)
 #define __DOS__ 1
 #endif
-#if defined(__I86__) || defined(M_I86) || defined(_M_I86)
+#if defined(__I86__)
 #define DOS16 1
 #else
 #define DOS32 1
 #endif
 #elif defined(__OS2__) 
-#if defined(__I86__) || defined(M_I86) || defined(_M_I86)
+#if defined(__I86__)
 #define OS2_16 1
 #else
 #define OS2_32 1
-#endif
-#endif
-
-#if defined(__I86__) || defined(M_I86) || defined(_M_I86) 
-#if !defined(__I86__)
-#define __I86__ 1
 #endif
 #endif
 
