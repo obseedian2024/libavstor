@@ -1383,14 +1383,14 @@ static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
     numread = io_read(db, page, page_offset, PAGE_SIZE);
     if (0 == numread) {
         //THROW(AVSTOR_IOERR, "page offset beyond EOF.");
-        return 0;
+        return AVSTOR_IOERR;
     }
     else if (numread < 0) {
         //THROW(AVSTOR_IOERR, "fread failed.");
-        return 0;
+        return AVSTOR_IOERR;
     }
     else if (numread < PAGE_SIZE) {
-        return 0;
+        return AVSTOR_CORRUPT;
         //THROW(AVSTOR_CORRUPT, "fread read fewer than expected bytes.");
     }
     checksum = page->checksum;
@@ -1398,10 +1398,10 @@ static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
     if (checksum != compute_page_checksum(page)) {
         //THROW(AVSTOR_CORRUPT, "page checksum error.");
         page->checksum = checksum;
-        return 0;
+        return AVSTOR_CORRUPT;
     }
     page->checksum = checksum; // cache->l2_lru_count;
-    return 1;
+    return AVSTOR_OK;
 }
 
 static int write_page(avstor *db, AvPage* page)
@@ -1414,10 +1414,10 @@ static int write_page(avstor *db, AvPage* page)
         res = io_write(db, page, page->page_offset, PAGE_SIZE);
         if (res < PAGE_SIZE) {
             set_page_dirty(page);
-            return 0;
+            return AVSTOR_IOERR;
         }
     }
-    return 1;
+    return AVSTOR_OK;
 }
 
 static __inline unsigned cache_get_row(PageCache *cache, avstor_off page_ofs)
@@ -1478,7 +1478,7 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
     if (poldest) {
         if (is_page_dirty(poldest->page)) {
             if (auto_save) {
-                if (!write_page(db, poldest->page)) {
+                if (AVSTOR_OK != write_page(db, poldest->page)) {
                     return evict_io_error;
                 }
             }
@@ -1576,8 +1576,12 @@ skip_evict:
 
     page = item->page;
     if (is_existing) {
+        int result;
         // If looking for existing page, we can load it into the empty (or evicted) page        
-        read_page(db, page_ofs, page);
+        if (AVSTOR_OK != (result = read_page(db, page_ofs, page))) {
+            rwl_release(&row->lock);
+            THROW(result, "read_page() failed while reading page into cache");
+        }
         item->load_time = row->load_count++;
     }
     else {
@@ -2390,11 +2394,15 @@ int AVCALL avstor_commit(avstor *db, int flush)
                     break;
                 }
                 else {
-                    write_page(db, page);
+                    if (AVSTOR_OK != (result = write_page(db, page))) {
+                        THROW(result, "write_page() failed");
+                    }
                 }
             }
         }
-        write_page(db, cache->header);
+        if (AVSTOR_OK != (result = write_page(db, cache->header))) {
+            THROW(result, "write_page() failed while writing header");
+        }
         if (flush && !io_commit(db->file)) {
             THROW(AVSTOR_IOERR, "commit() failed");
         }
@@ -3200,7 +3208,9 @@ static void AVCALL db_open_file(avstor *db, const char* filename, int oflags)
     if (hdr.pagesize != PAGE_SIZE) {
         THROW(AVSTOR_CORRUPT, "Invalid page size.");
     }
-    read_page(db, 0, db->cache.header);
+    if (AVSTOR_OK != (result = read_page(db, 0, db->cache.header))) {
+        THROW(result, "read_page() failed while reading header.");
+    }
     memcpy(db->cache.old_header, db->cache.header, PAGE_SIZE);
 }
 
