@@ -359,7 +359,7 @@ struct AvPage {
             // INVALID_INDEX if at the end of the list.
             // variable size actually, should be flexible array but to support old compilers
             // it is done this way
-            uint16_t            index[2000];
+            uint16_t            nodes[2080];
         };
     };
 };
@@ -417,10 +417,15 @@ typedef struct {
 
 typedef struct AvNode {
     uint16_t            hdr;
-    uint16_t            index;
+
+    /* 0-based index into AvPage.index array */
+    uint8_t             index;
+
+    /* size of name */
+    uint8_t             szname;
+
     NodeRef             left;
     NodeRef             right;
-    uint8_t             szname;
     char                name[];
 } AvNode;
 
@@ -1640,7 +1645,7 @@ static __inline AvPage* get_ptr_page(const void *ptr)
 
 static __inline avstor_off get_ofs(const AvNode *node)
 {
-    return get_ptr_page(node)->page_offset + node->index;
+    return get_ptr_page(node)->page_offset + offsetof(AvPage, nodes[node->index]);
 }
 
 static __inline NodeRef get_nref(const AvNode *node)
@@ -1665,10 +1670,9 @@ static __inline void assign_nref(NodeRef src, NodeRef *dest)
     set_ptr_dirty(dest);
 }
 
-static __inline AvNode* get_node(AvPage *page, unsigned index)
+static __inline AvNode* get_node(AvPage *page, unsigned ioff)
 {
-    //assert(*(uint16_t*)PTR(page, index) != INVALID_INDEX);
-    uint16_t node_offset = *(uint16_t*)PTR(page, index);
+    uint16_t node_offset = *(uint16_t*)PTR(page, ioff);
     if (node_offset == INVALID_INDEX) {
         THROW(AVSTOR_INVOPER, "Node has been deleted.");
     }
@@ -1688,7 +1692,7 @@ static int is_node_addr_valid(const avstor *db, const AvNode* node)
     /* if (memcmp(&page->id, &PAGE_ID, sizeof(PAGE_ID)) != 0) {
          goto error_node;
      }*/
-    if (get_node(page, node->index) != node) {
+    if (get_node(page, offsetof(AvPage, nodes[node->index])) != node) {
         goto error_node;
     }
     return 1;
@@ -1707,7 +1711,7 @@ static unsigned get_page_free_space(AvPage* page)
 {
     unsigned top = page->top;
     unsigned bottom = align_node(  //compensate for alignment
-                                 offsetof(AvPage, index[page->index_count])
+                                 offsetof(AvPage, nodes[page->index_count])
                                  + (page->index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated      
     return (top > bottom) ? top - bottom : 0;
 }
@@ -2178,7 +2182,7 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
     nextfree = page->index_freelist;
     //set_page_dirty(page);
     if (nextfree == INVALID_INDEX) {
-        index = &page->index[page->index_count];
+        index = &page->nodes[page->index_count];
         page->index_count++;
     }
     else {
@@ -2191,11 +2195,11 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
     node = get_node(page, index_ofs);
 
     // check if we have overwritten the node index array
-    if ((void*)node < (void*)&page->index[page->index_count]) {
+    if ((void*)node < (void*)&page->nodes[page->index_count]) {
         THROW(AVSTOR_INTERNAL, MSG_PAGE_CORRUPTED);
     }
 
-    node->index = (uint16_t)index_ofs;
+    node->index = (uint8_t)((index_ofs - offsetof(AvPage, nodes)) / sizeof(uint16_t));
     set_node_size(node, size);
     //lock_page(page);
     return node;
@@ -2222,8 +2226,8 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
     next = PTR(node, oldsize);
     if (newsize == 0) { // free the node instead of resize
         //check if we deallocated the last index
-        uint16_t* oldindex = (uint16_t*)PTR(page, node->index);
-        if (node->index == (offsetof(AvPage, index) - 2 + page->index_count * sizeof(uint16_t))) {
+        uint16_t* oldindex = &page->nodes[node->index];
+        if (node->index == page->index_count - 1) {
             // yes, just decrease count and zero the last one
             *oldindex = 0;
             page->index_count--;
@@ -2231,7 +2235,7 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
         else {
             // no, add it to free index list
             *oldindex = page->index_freelist;
-            page->index_freelist = node->index;
+            page->index_freelist = offsetof(AvPage, nodes[node->index]);
         }
     }
     src = PTR(page, page->top);
@@ -2250,7 +2254,7 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
     // Adjust index offsets
     cur = dest;
     while (cur < next) {
-        uint16_t* curslot = (uint16_t*)PTR(page, cur->index);
+        uint16_t* curslot = &page->nodes[cur->index];
         *curslot = (uint16_t)((int)*curslot + ((int)oldsize - (int)newsize));
         assert(is_node_addr_valid(NULL, cur));
         cur = (AvNode*)PTR(cur, get_node_size(cur));
