@@ -97,6 +97,7 @@
       <PreprocessorDefinitions>AVSTOR_CONFIG_FILE_64BIT=1;WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\</AdditionalIncludeDirectories>
+      <AdditionalOptions>-fsanitize=undefined %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -125,6 +126,7 @@
       <PreprocessorDefinitions>AVSTOR_CONFIG_FILE_64BIT=1;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\</AdditionalIncludeDirectories>
+      <AdditionalOptions>-fsanitize=undefined %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
