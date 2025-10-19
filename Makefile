@@ -10,7 +10,7 @@ LIB_FILE = $(BIN_DIR)/lib$(LIB_NAME).a
 LIB_OBJS = $(OBJ_DIR)/avstor.o
 
 AVSCRDB_FILE = $(BIN_DIR)/avscrdb 
-AVSCRDB_OBJS = $(TEST_OBJ_DIR)/avscrdb.o $(TEST_OBJ_DIR)/avsdb.o
+AVSCRDB_OBJS = $(TEST_OBJ_DIR)/avscrdb.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)/timer.o
 
 CC = gcc
 AR = ar

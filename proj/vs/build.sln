@@ -9,6 +9,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "avstest", "avstest\avstest.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "avscrdb", "avscrdb\avscrdb.vcxproj", "{6A19148F-49CE-42F5-80AD-2D112C396342}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tests.Shared", "tests.Shared\tests.Shared.vcxitems", "{B2AB1EA0-1F47-477D-99DD-A2E298B20452}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -47,5 +49,9 @@ Global
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3645D7CC-DD7C-414B-BE4A-33C8956A537D}
+	EndGlobalSection
+	GlobalSection(SharedMSBuildProjectFiles) = preSolution
+		tests.Shared\tests.Shared.vcxitems*{6a19148f-49ce-42f5-80ad-2d112c396342}*SharedItemsImports = 4
+		tests.Shared\tests.Shared.vcxitems*{b2ab1ea0-1f47-477d-99dd-a2e298b20452}*SharedItemsImports = 9
 	EndGlobalSection
 EndGlobal
