@@ -31,41 +31,27 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef AVSTEST_H
-#define AVSTEST_H
-
-#include <stdint.h>
 #include <avstor.h>
 
-#define AVSTEST_MUST_PASS 1 
+#include "avstest.h"
 
-typedef int (*avstest_fn)(void *param);
+struct mytest_param {
+    int a;
+    int b;
+};
 
-typedef struct AvsTest {
-    const char          *test_name;
-    avstest_fn          test_fn;
-    int                 flags;
-    void                *params;
-} AvsTest;
+static int mytest(void *param)
+{
+    (void)param;
+    return 0;
+}
 
-typedef struct AvsTests {
-    int                 test_count;
-    const AvsTest       *test_list;
-    char*               test_file;
-} AvsTests;
+static const struct mytest_param Depth_First_Traversal_Param = { 3, 4 };
+static const struct mytest_param Another_DFS_test_Param = { 3, 4 };
 
-#define DEFINE_TEST_LIST(test) static const AvsTest test##_TEST_LIST[] =
+DEFINE_TEST_LIST(DFS) {
+    { "Depth First Traversal",  &mytest, 0, (void*)&Depth_First_Traversal_Param },
+    { "Another DFS test",       &mytest, 0, (void*)&Another_DFS_test_Param }
+};
 
-#define DEFINE_TESTS(tests)   const AvsTests tests##_TESTS = { \
-                            sizeof(tests##_TEST_LIST) / sizeof(AvsTest), \
-                            tests##_TEST_LIST, \
-                            __FILE__ \
-                            }
-
-#define IMPORT_TESTS(tests)   extern const AvsTests tests##_TESTS
-
-extern int is_term;
-
-int avstest_run_test(const AvsTest *test, double *duration);
-
-#endif
+DEFINE_TESTS(DFS);

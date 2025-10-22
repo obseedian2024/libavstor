@@ -12,6 +12,10 @@ LIB_OBJS = $(OBJ_DIR)/avstor.o
 AVSCRDB_FILE = $(BIN_DIR)/avscrdb 
 AVSCRDB_OBJS = $(TEST_OBJ_DIR)/avscrdb.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)/timer.o
 
+AVSTEST_FILE = $(BIN_DIR)/avstest 
+AVSTEST_OBJS = $(TEST_OBJ_DIR)/avstest.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)/timer.o \
+               $(TEST_OBJ_DIR)/tst*.o
+
 CC = gcc
 AR = ar
 
@@ -35,10 +39,13 @@ else
 	CFLAGS += -D_DEBUG -g3
 endif
 
-all: $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(LIB_FILE) $(AVSCRDB_FILE)
+all: $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(LIB_FILE) $(AVSCRDB_FILE) $(AVSTEST_FILE)
 
 $(AVSCRDB_FILE): $(LIB_OBJS) $(AVSCRDB_OBJS)
 	$(CC) $(AVSCRDB_OBJS) $(LIB_FILE) -o $@
+
+$(AVSTEST_FILE): $(LIB_OBJS) $(AVSTEST_OBJS)
+	$(CC) $(AVSTEST_OBJS) $(LIB_FILE) -o $@
 
 $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)

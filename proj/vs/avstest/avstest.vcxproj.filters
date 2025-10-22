@@ -23,5 +23,8 @@
     <ClCompile Include="..\..\..\tests\avstest.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\tests\tst_dfs.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
