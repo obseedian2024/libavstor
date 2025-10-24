@@ -65,7 +65,13 @@ typedef struct AvsTests {
 #define IMPORT_TESTS(tests)   extern const AvsTests tests##_TESTS
 
 extern int is_term;
+extern char* RED;
+extern char* GRN;
+extern char* YEL;
+extern char* WHT;
+extern char* CRESET;
 
+void avstest_print_err(const char *msg);
 int avstest_run_test(const AvsTest *test, double *duration);
 
 #endif

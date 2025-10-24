@@ -208,6 +208,11 @@ static int init_term(void)
     return 0;
 }
 
+void avstest_print_err(const char *msg)
+{
+    printf("%sERROR: %s%s\n", YEL, msg, CRESET);
+}
+
 int is_term;
 
 IMPORT_TESTS(DFS);
@@ -221,6 +226,11 @@ int main(void)
 {
     double duration;
     int result;
+
+    printf("libavstor Test Suite\n"
+           "BSD 3-Clause License\n"
+           "Copyright (c) 2025 Tamas Fejerpataky\n"
+           "See project at https://github.com/obseedian2024/libavstor\n\n");
 
     is_term = init_term();
 

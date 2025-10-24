@@ -156,6 +156,11 @@
     <ClCompile Include="..\..\..\tests\avstest.c" />
     <ClCompile Include="..\..\..\tests\tst_dfs.c" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\libavstor\libavstor.vcxproj">
+      <Project>{26a45d83-be95-4bbf-a300-9b1127c2d55b}</Project>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
