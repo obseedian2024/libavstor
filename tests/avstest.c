@@ -107,13 +107,15 @@ static int run_all_tests(const AvsTests* *tests, double *total_duration)
 
     *total_duration = 0.0;
     while (*tests) {
-        double duration = 0.0;
+        double file_duration = 0.0;
         int file_result = (0 == 0);
         printf("--> Running tests in %s\n", (*tests)->test_file);
 
         for (i = 0; i < (*tests)->test_count; i++) {
+            double duration;
             int test_result = avstest_run_test(&(*tests)->test_list[i], &duration);
             file_result = file_result && test_result;
+            file_duration += duration;
             *total_duration += duration;
             if (!test_result && ((*tests)->test_list[i].flags & AVSTEST_MUST_PASS)) {
                 printf("%sPrevious test marked as MUST PASS, stopping tests.%s\n\n",YEL, CRESET);
@@ -122,7 +124,7 @@ static int run_all_tests(const AvsTests* *tests, double *total_duration)
         }
 
         printf("===========================================================================\n");
-        show_result((*tests)->test_file, file_result, duration);
+        show_result((*tests)->test_file, file_result, file_duration);
         printf("\n");
         result = result && file_result;
         tests++;
