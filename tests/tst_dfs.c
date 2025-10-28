@@ -39,12 +39,23 @@
 #include "avsdb.h"
 #include "avstest.h"
 
+#define TEST_DB "test.db"
+#define LEVEL_COUNT 3
+
 struct dfs_create_db_param {
     const char        *filename;
     unsigned    cache_size;
     int         level_count;
     long        *child_count;
 };
+
+struct dfs_traversal_param {
+    const char  *filename;
+    unsigned    cache_size;
+    int         max_levels;
+};
+
+long actual_node_total;
 
 static int dfs_create_db(void *param)
 {
@@ -57,15 +68,15 @@ static int dfs_create_db(void *param)
         int32_t     next_key;
     } *st, *top;
     avstor *db;
-    long total_nodes = 0;
-    long nodes_expected = 0;
+    long expected_node_total;
     long nodes_per_level = 1;
     int i, res, result, level = 0;
 
     /* Calculate expected number of nodes to be created */
+    expected_node_total = 0;
     for (i = 0; i < p->level_count; i++) {       
         nodes_per_level *= p->child_count[i];
-        nodes_expected += nodes_per_level;
+        expected_node_total += nodes_per_level;
     }
 
     /* allocate stack for a depth-first insertion algorithm */
@@ -106,7 +117,7 @@ static int dfs_create_db(void *param)
         else {
             /* create the node with sequential int keys within the tree */
             dbnode.key = top->next_key;
-            dbnode.data = total_nodes;
+            dbnode.data = actual_node_total;
             key.buf = &dbnode;
 
             /* only need to return new node if we must create children for it (i.e. non-leaf) */
@@ -121,7 +132,7 @@ static int dfs_create_db(void *param)
                 result = 0;
                 goto close_and_return;
             }
-            total_nodes++;
+            actual_node_total++;
             top->next_key++;
 
             /* Create children first, before creating siblings */
@@ -140,7 +151,7 @@ static int dfs_create_db(void *param)
         result = 0;
     }
     else {
-        if (nodes_expected != total_nodes) {
+        if (expected_node_total != actual_node_total) {
             result = 0;
             printf("%sERROR: Total nodes created not equal expected number of nodes.%s\n", YEL, CRESET);
         }
@@ -158,14 +169,137 @@ close_and_return:
     return result;
 }
 
-#define TEST_DB "test.db"
+/* Depth-first traversal routine used by both single threaded and 
+   multi-threaded tests. */
+static int dfs_traversal_proc(avstor *db, avstor_node *parent,
+                              struct dfs_traversal_param* param, int64_t *actual_sum_values)
+{
+    AvsDbIntRec key_name;
+    avstor_key key;
+    struct st_elem {        
+        avstor_inorder inorder_st;
+        avstor_node node;
+        int result;
+    } *st, *top;
 
-static const long NODECOUNT_LIST[] = { 100, 100, 100 };
+    int result, res, level = 0;
+    int64_t sum_values = 0;
+   
+    /* allocate stack for a depth-first traversal algorithm */
+    st = calloc(param->max_levels, sizeof(struct st_elem));
+    if (!st) {
+        printf("%sERROR: calloc failed%s\n", YEL, CRESET);
+        return 0;
+    }    
+
+    /* initialize top of stack (i.e. the top level in the hierarchy) */
+    top = &st[0];
+    avstor_node_init(db, &top->node);
+
+    /* key length and buffer will be the same for all subtrees */
+    key.len = sizeof(AvsDbIntRec);
+    key.comparer = NULL;
+    key.buf = &key_name;
+
+    top->result = avstor_inorder_first(&top->inorder_st, parent, NULL, AVSTOR_KEYS, &top->node);
+    if (top->result != AVSTOR_OK && top->result != AVSTOR_NOTFOUND) {
+        printf("%sERROR: avstor_inorder_first failed with %i%s\n", YEL, top->result, CRESET);
+        result = 0;
+        goto close_and_return;
+    }
+
+    while (1) {        
+        if (top->result == AVSTOR_OK) {
+            avstor_node prev_node = top->node;
+
+            /* process the previous node */
+            if (AVSTOR_OK != (res = avstor_get_name(&prev_node, &key))) {
+                printf("%sERROR: avstor_get_name failed with %i%s\n", YEL, res, CRESET);
+                result = 0;
+                goto close_and_return;
+            }
+            sum_values += key_name.data;
+
+            /* advance to next node */
+            top->result = avstor_inorder_next(&top->inorder_st, &top->node);
+            if (top->result != AVSTOR_OK && top->result != AVSTOR_NOTFOUND) {
+                printf("%sERROR: avstor_inorder_next failed with %i%s\n", YEL, res, CRESET);
+                result = 0;
+                goto close_and_return;
+            }
+
+            /* but process subtree of previous node first */
+            if (level < param->max_levels - 1) {
+                top = &st[++level];
+                top->result = avstor_inorder_first(&top->inorder_st, &prev_node, NULL, AVSTOR_KEYS, &top->node);
+                if (top->result != AVSTOR_OK && top->result != AVSTOR_NOTFOUND) {
+                    printf("%sERROR: avstor_inorder_first failed with %i%s\n", YEL, res, CRESET);
+                    result = 0;
+                    goto close_and_return;
+                }
+            }
+            avstor_node_destroy(&prev_node);
+        }
+        else {
+            /* top->result == AVSTOR_NOTFOUND 
+               finished processing subtree, move back up to parent tree */
+
+            /* if top level is done, quit*/
+            if (--level < 0) break;
+
+            top = &st[level];
+        }
+    }
+    *actual_sum_values = sum_values;
+    result = 1;
+close_and_return:
+    /* destroy nodes in stack (in case of error) */
+    while (level >= 0) {
+        avstor_node_destroy(&st[level--].node);
+    }
+    free(st);
+    return result;
+}
+
+static int dfs_traversal_st(void *param)
+{
+    avstor_node parent;
+    struct dfs_traversal_param* p = (struct dfs_traversal_param*)param;
+    avstor *db;
+    int res, result;
+    int64_t actual_sum_values = 0;
+
+    /* node values are sequential starting at zero, so their sum
+       can be calculated by the known formula n(n-1)/2 */
+    int64_t expected_sum_values = (int64_t)actual_node_total * ((int64_t)actual_node_total - 1) / 2;
+
+    /* open database file created in previous test */
+    if (AVSTOR_OK != (res = avstor_open(&db, p->filename, p->cache_size, AVSTOR_OPEN_READONLY))) {
+        printf("%sERROR: avstor_open failed with %i%s\n", YEL, res, CRESET);
+        return 0;
+    }
+
+    /* start at the root of the file */
+    avstor_node_init(db, &parent);
+    result = dfs_traversal_proc(db, &parent, p, &actual_sum_values);
+    avstor_close(db);
+    if (expected_sum_values != actual_sum_values) {
+        printf("%sERROR: Unexpected sum of node values%s\n", YEL, CRESET);
+        result = 0;
+    }    
+    return result;
+}
+
+static const long NODECOUNT_LIST[LEVEL_COUNT] = { 100, 100, 100 };
 static const struct dfs_create_db_param
-DFS_CREATE_DB_PARAM = { TEST_DB, 4096, 3, (long*)&NODECOUNT_LIST };
+DFS_CREATE_DB_PARAM = { TEST_DB, 4096, LEVEL_COUNT, (long*)&NODECOUNT_LIST };
+
+static const struct dfs_traversal_param
+DFS_TRAVERSAL_ST = { TEST_DB, 4096, LEVEL_COUNT };
 
 DEFINE_TEST_LIST(DFS) {
-    { "Create DB for DFS", &dfs_create_db, 0, (void*)&DFS_CREATE_DB_PARAM }
+    { "Create DB for DFS", &dfs_create_db, 0, (void*)&DFS_CREATE_DB_PARAM },
+    { "DFS Traversal (Single Threaded)", &dfs_traversal_st, 0, (void*)&DFS_TRAVERSAL_ST }
 };
 
 DEFINE_TESTS(DFS);
