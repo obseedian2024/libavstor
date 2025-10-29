@@ -35,8 +35,9 @@
 #include <avstor.h>
 
 #include "avsdb.h"
+#include "timer.h"
 
-#define AVSCRDB_CACHE_SIZE 4096
+#define AVSCRDB_CACHE_SIZE (32 * 1024)
 
 static long create_db(const char* filename, int level_count, long *child_count)
 {
@@ -151,6 +152,7 @@ static void show_help(void)
 
 int main(int argc, char *argv[])
 {
+    Timer tm;
     char *filename;
     long *levels, nodes_created, nodes_expected, nodes_per_level;
     int num_levels, i;
@@ -185,9 +187,12 @@ int main(int argc, char *argv[])
 
     printf("Creating file...\n");
 
+    timer_start(&tm);
     nodes_created = create_db(filename, num_levels, levels);
+    timer_stop(&tm);
     if (nodes_created >= 0) {
-        printf("Total number of nodes inserted: %li\n", nodes_created);
+        printf("Done.\nInserted %li nodes in %f seconds (%li nodes/s)\n", 
+               nodes_created, tm.secs, (long)((double)nodes_created / tm.secs));      
         if (nodes_created != nodes_expected) {
             /* should not happen if everything is working */
             printf("WARNING: Expected number of nodes not equal to nodes actually written.\n");

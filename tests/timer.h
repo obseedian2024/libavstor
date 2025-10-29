@@ -31,47 +31,46 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef AVSTEST_H
-#define AVSTEST_H
+#ifndef TIMER_H
+#define TIMER_H
 
-#include <stdint.h>
-#include <avstor.h>
+#include <time.h>
 
-#define AVSTEST_MUST_PASS 1 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN 1
+#include <Windows.h>
+#endif
 
-typedef int (*avstest_fn)(void *param);
+#define TIMER_HIRES 1
 
-typedef struct AvsTest {
-    const char          *test_name;
-    avstest_fn          test_fn;
-    int                 flags;
-    void                *params;
-} AvsTest;
+typedef struct Timer {
+#if defined(__unix__)
+    clockid_t               clock_id;
+#endif
+    int                     flags;
+    double                  secs;
+    union {
+#if defined(_WIN32)       
+        struct {
+            LARGE_INTEGER   pc_start_time;
+            LARGE_INTEGER   pc_end_time;
+        };
+#endif
+        struct {
+            clock_t         start_time;
+            clock_t         end_time;
+        };
 
-typedef struct AvsTests {
-    int                 test_count;
-    const AvsTest       *test_list;
-    char*               test_file;
-} AvsTests;
+#if defined(__unix__)
+        struct {
+            struct timespec ts_start_time;
+            struct timespec ts_end_time;
+        };
+#endif
+    };
+} Timer;
 
-#define DEFINE_TEST_LIST(test) static const AvsTest test##_TEST_LIST[] =
-
-#define DEFINE_TESTS(tests)   const AvsTests tests##_TESTS = { \
-                            sizeof(tests##_TEST_LIST) / sizeof(AvsTest), \
-                            tests##_TEST_LIST, \
-                            __FILE__ \
-                            }
-
-#define IMPORT_TESTS(tests)   extern const AvsTests tests##_TESTS
-
-extern int is_term;
-extern char* RED;
-extern char* GRN;
-extern char* YEL;
-extern char* WHT;
-extern char* CRESET;
-
-void avstest_print_err(const char *msg);
-int avstest_run_test(const AvsTest *test, double *duration);
+void timer_start(Timer *t);
+void timer_stop(Timer *t);
 
 #endif

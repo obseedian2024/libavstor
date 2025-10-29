@@ -3641,7 +3641,7 @@ static int inorder_next(avstor_inorder *st, avstor_off ofs, avstor_node *out_nod
                 THROW(AVSTOR_CORRUPT, MSG_BACKTRACE_UNDERFLOW);
             }
             unlock_ptr_checked(node);
-            out_node->ref = inorder_state_top(st);
+            avstor_node_set(out_node, inorder_state_top(st), st->db);
             return AVSTOR_OK;
         }
     }

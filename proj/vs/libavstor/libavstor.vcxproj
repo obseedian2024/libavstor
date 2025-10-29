@@ -109,6 +109,7 @@
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\</AdditionalIncludeDirectories>
+      <AdditionalOptions>-fsanitize=undefined %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -147,6 +148,7 @@
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\</AdditionalIncludeDirectories>
+      <AdditionalOptions>-fsanitize=undefined %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>
