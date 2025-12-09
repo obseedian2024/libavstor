@@ -45,18 +45,26 @@
 #define PAGE_SIZE               4096
 #define L2_ASSOC                8
 
-#if defined(__I86__) || defined(M_I86) || defined(_M_I86) 
+#if defined(__I86__) || defined(M_I86) || defined(_M_I86)
 #if !defined(__I86__)
 #define __I86__ 1
 #endif
 #define DEFAULT_BLOCK_SIZE      (64u - 8u)
-#else 
+#else
 #define DEFAULT_BLOCK_SIZE      256u
 #endif
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN 1
 #include <Windows.h>
+
+#elif defined(__OS2__)
+
+#define INCL_DOS
+#define INCL_DOSERRORS
+
+#include <os2.h>
+
 #endif
 
 #if defined(__unix__)
@@ -67,20 +75,58 @@
 #endif
 
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
-#if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >=201112L)) || defined(AVSTOR_CONFIG_FORCE_C11_THREADS)
+
+#if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >=201112L))
+
+// Use C11 atomics and synchronization primitives if available
+
 #include <stdatomic.h>
 #include <threads.h>
-#define USE_C11_THREADS 1
- 
-#if defined(_WIN32) && (_WIN32_WINNT >= 0x0600) && !defined(AVSTOR_CONFIG_FORCE_C11_THREADS)
-// Under Vista+ use Win32 API SRW locks and condition variables instead of the much slower C11 
-// implementation. We don't need the recursion and timeout features anyway. 
+
+#define atomic_inc_int(addend)                (atomic_fetch_add((addend), 1) + 1)
+#define atomic_dec_int(addend)                (atomic_fetch_add((addend), -1) - 1)
+#define atomic_load_int_acquire(x)            atomic_load_explicit((x), memory_order_acquire)
+#define atomic_store_int_release(x, value)    atomic_store_explicit((x), (value), memory_order_release)
+
+#else
+
+// Otherwise use our custom atomics implementation
+
+#include "../threads/stdatomic.h"
+#include "../threads/threads.h"
+
+#define atomic_inc_int                        _atomic_inc
+#define atomic_dec_int                        _atomic_dec
+#define atomic_load_int_acquire               atomic_load
+#define atomic_store_int_release              atomic_store
+
+#endif
+
+#if defined(_WIN32) && (_WIN32_WINNT >= 0x0600)
+
+// Under Vista+ use Win32 API SRW locks and condition variables instead of the much slower C11
+// implementation. We don't need the recursion and timeout features anyway.
+
+// Allow not using Win32 condition variables
+#if !defined(AVSTOR_CONFIG_NO_WIN32_CNDVAR)
+#define USE_WIN32_CNDVAR 1
+
+// Allow not using Win32 SRW locks (critical section will be used instead)
+#if !defined(AVSTOR_CONFIG_NO_SRW_LOCKS)
 #define USE_WIN32_SRW_LOCKS 1
 #endif
-#else 
-#error Concurrency not supported on this platform.
+
 #endif
-#endif 
+#endif
+
+#else 
+
+#define atomic_inc_int(obj)                   (++(*(obj)))
+#define atomic_dec_int(obj)                   (--(*(obj)))
+#define atomic_load_int_acquire(obj)          (*(obj))
+#define atomic_store_int_release(obj,value)   (void)(*(obj) = (value))
+
+#endif
 
 #if !defined(offsetof)
 #define offsetof(t, d)          ((size_t)&((t*)(0))->d)
@@ -91,7 +137,7 @@
 #define THREAD_LOCAL __declspec(thread)
 #elif defined(__clang__) || defined(__GNUC__)
 #define THREAD_LOCAL __thread
-#else 
+#else
 #define THREAD_LOCAL
 #error "Define THREAD_LOCAL for compiler"
 #endif
@@ -117,7 +163,7 @@
 #else
 #define DOS32 1
 #endif
-#elif defined(__OS2__) 
+#elif defined(__OS2__)
 #if defined(__I86__)
 #define OS2_16 1
 #else
@@ -153,7 +199,7 @@
 #if defined(_WINDLL)
 #if (defined(__clang__) || defined(__GNUC__))
 #define FALLTHROUGH __attribute__((fallthrough))
-#else 
+#else
 #define FALLTHROUGH
 #endif
 #endif
@@ -220,13 +266,13 @@ typedef enum ExceptionState
 
 typedef struct ExceptionFrame
 {
-    jmp_buf		            context;
+    jmp_buf                 context;
     struct ExceptionFrame   *prev;
-    const char  		    *file;
+    const char              *file;
     const char              *msg;
-    int					    err;
+    int                     err;
     ExceptionState          state;
-    int					    line_no;
+    int                     line_no;
 } ExceptionFrame;
 
 #if defined(_WINDLL)
@@ -237,34 +283,33 @@ typedef struct AvTLSData {
 #endif
 
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
-#if defined(USE_C11_THREADS)
-typedef _Atomic(int32_t)    atomic_int32;
-#else 
-typedef int32_t             atomic_int32;
-#endif
 
 typedef struct AvMutex {
-#if defined(USE_WIN32_SRW_LOCKS)   
-    SRWLOCK		            mtx;
-#elif defined(USE_C11_THREADS)
-    mtx_t		            mtx;
+#if defined(USE_WIN32_CNDVAR)
+#if defined(USE_WIN32_SRW_LOCKS)
+    SRWLOCK             mtx;
+#else
+    CRITICAL_SECTION    cs;
+#endif
+#else
+    mtx_t               mtx;
 #endif
 } AvMutex;
 
 typedef struct AvCnd {
-#if defined(USE_WIN32_SRW_LOCKS)
-    CONDITION_VARIABLE		cv;
-#elif defined(USE_C11_THREADS)
-    cnd_t                   cv;
+#if defined(USE_WIN32_CNDVAR)
+    CONDITION_VARIABLE  cv;
+#else
+    cnd_t               cv;
 #endif
 } AvCnd;
 
 // quick & dirty upgradable non-recursive read-write lock using condition variables
 typedef struct rwl_t {
-    AvMutex		mtx;
-    AvCnd		cv;         // Shared and exlusive locks wait on this cv
-    AvCnd		cv_upgr;    // Upgrader waits on this cv
-    int			lock;
+    AvMutex             mtx;
+    AvCnd               cv;         // Shared and exlusive locks wait on this cv
+    AvCnd               cv_upgr;    // Upgrader waits on this cv
+    int                 lock;
 } rwl_t;
 #endif
 
@@ -273,7 +318,7 @@ typedef struct rwl_t {
 typedef struct NodeRef {
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
     uint32_t            offset[2];
-#else 
+#else
     avstor_off          offset;
 #endif
 } NodeRef;
@@ -293,17 +338,20 @@ struct AvPage {
     // page checksum when on file, LRU count in memory
     uint32_t            checksum;
 
-    // lock count 
+    // lock count
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
-    volatile atomic_int32 lock_count;
-#else 
+    union {
+        volatile atomic_int lock_count;
+        volatile int32_t    lock_count_i32;
+    };
+#else
     int32_t             lock_count;
 #endif
     // offset of page in the file
-    avstor_off            page_offset;
+    avstor_off          page_offset;
 #if !defined(AVSTOR_CONFIG_FILE_64BIT)
     int32_t             pad_offset;
-#endif      
+#endif
 
     // bit field, PAGE_DIRTY denotes modified pages
     uint8_t             status;
@@ -326,12 +374,12 @@ struct AvPage {
             NodeRef             root;
 #if !defined(AVSTOR_CONFIG_FILE_64BIT)
             int32_t             pad_root;
-#endif           
+#endif
 
             NodeRef             root_links;
 #if !defined(AVSTOR_CONFIG_FILE_64BIT)
             int32_t             pad_root_links;
-#endif           
+#endif
 
             uint32_t            flags;
 
@@ -512,7 +560,7 @@ static const char* err_codes[] =
 
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
 static const NodeRef    NODEREF_NULL = { { 0, 0 } };
-#else 
+#else
 static const NodeRef    NODEREF_NULL = { 0 };
 #endif
 
@@ -602,14 +650,14 @@ static void throw_ex(int err, const char* msg, int line_no, const char* file, st
 #define TRY(ex)         do { ExceptionFrame ex;             \
                             ex.err = 0;                     \
                             ex.state = EX_STATE_IN_TRY;     \
-	                        ex.prev = cur_ex;               \
-	                        cur_ex = &ex;                   \
-	                    if (0 == setjmp(ex.context)) {
+                                ex.prev = cur_ex;               \
+                                cur_ex = &ex;                   \
+                            if (0 == setjmp(ex.context)) {
 
 #define END_TRY(ex)     }                                                           \
                         if (ex.state == EX_STATE_IN_CATCH) ex.err = 0;              \
                         cur_ex = ex.prev;                                           \
-		                if (ex.err) throw_ex(0, NULL, __LINE__, __FILE__, &ex);  \
+                                if (ex.err) throw_ex(0, NULL, __LINE__, __FILE__, &ex);  \
                         } while(0)
 
 #define CATCH_ANY(ex)   } else {                                \
@@ -622,38 +670,35 @@ static void throw_ex(int err, const char* msg, int line_no, const char* file, st
 #define FINALLY(ex)     } \
                         { \
                             if (ex.state == EX_STATE_IN_CATCH) ex.err = 0; \
-                            ex.state = EX_STATE_IN_FINALLY; 
+                            ex.state = EX_STATE_IN_FINALLY;
 
 #define THROW(err_no, msg)   throw_ex((err_no), (msg), __LINE__, __FILE__, NULL)
 
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
-#if defined(USE_C11_THREADS)
-#define atomic_inc_int32(addend)                atomic_fetch_add((addend), 1)
-#define atomic_dec_int32(addend)                atomic_fetch_add((addend), -1)
-#define atomic_load_int32_relaxed(x)            atomic_load_explicit((x), memory_order_relaxed)
-#define atomic_store_int32_release(x, value)    atomic_store_explicit((x), (value), memory_order_release)
 
-#elif defined(_WIN32)
-
-#define atomic_inc_int32(addend) ((atomic_int32)InterlockedIncrement((volatile LONG*)(addend)) - 1)
-#define atomic_dec_int32(addend) ((atomic_int32)InterlockedDecrement((volatile LONG*)(addend)) + 1)
-
-static __inline atomic_int32 atomic_load_int32_relaxed__(volatile atomic_int32 *x)
+#if defined(USE_WIN32_CNDVAR)
+static __inline int avcnd_init(AvCnd* avcv)
 {
-    return *x;
+    InitializeConditionVariable(&avcv->cv);
+    return 1;
 }
 
-static __inline void atomic_store_int32_release__(volatile atomic_int32 *x, atomic_int32 value)
+static __inline void avcnd_destroy(AvCnd* avcv)
 {
-    (void)InterlockedExchange((volatile LONG*)x, value);
+    memset(avcv, 0, sizeof(*avcv));
 }
 
-#define atomic_load_int32_relaxed(x)            atomic_load_int32_relaxed__(x)
-#define atomic_store_int32_release(x, value)    atomic_store_int32_release__(x, value)
-#else 
-#error Atomics not supported on this platform
-#endif
+static __inline int avcnd_signal(AvCnd* avcv)
+{
+    WakeConditionVariable(&avcv->cv);
+    return 1;
+}
 
+static __inline int avcnd_broadcast(AvCnd* avcv)
+{
+    WakeAllConditionVariable(&avcv->cv);
+    return 1;
+}
 #if defined(USE_WIN32_SRW_LOCKS)
 static __inline int avmtx_init(AvMutex* avmtx)
 {
@@ -676,34 +721,39 @@ static __inline void avmtx_unlock(AvMutex* avmtx)
     ReleaseSRWLockExclusive(&avmtx->mtx);
 }
 
-static __inline int avcnd_init(AvCnd* avcv)
-{
-    InitializeConditionVariable(&avcv->cv);
-    return 1;
-}
-
-static __inline void avcnd_destroy(AvCnd* avcv)
-{
-    memset(avcv, 0, sizeof(*avcv));
-}
-
 static __inline int avcnd_wait(AvCnd* avcv, AvMutex* avmtx)
 {
     return SleepConditionVariableSRW(&avcv->cv, &avmtx->mtx, INFINITE, 0) == TRUE;
 }
 
-static __inline int avcnd_signal(AvCnd* avcv)
+#else
+static __inline int avmtx_init(AvMutex* avmtx)
 {
-    WakeConditionVariable(&avcv->cv);
+    InitializeCriticalSection(&avmtx->cs);
     return 1;
 }
 
-static __inline int avcnd_broadcast(AvCnd* avcv)
+static __inline void avmtx_destroy(AvMutex* avmtx)
 {
-    WakeAllConditionVariable(&avcv->cv);
-    return 1;
+    DeleteCriticalSection(&avmtx->cs);
 }
-#elif defined(USE_C11_THREADS) 
+
+static __inline void avmtx_lock(AvMutex* avmtx)
+{
+    EnterCriticalSection(&avmtx->cs);
+}
+
+static __inline void avmtx_unlock(AvMutex* avmtx)
+{
+    LeaveCriticalSection(&avmtx->cs);
+}
+
+static __inline int avcnd_wait(AvCnd* avcv, AvMutex* avmtx)
+{
+    return SleepConditionVariableCS(&avcv->cv, &avmtx->cs, INFINITE) == TRUE;
+}
+#endif
+#else
 static __inline int avmtx_init(AvMutex* avmtx)
 {
     return mtx_init(&avmtx->mtx, mtx_plain) == thrd_success;
@@ -862,7 +912,7 @@ static int rwl_upgrade_or_release(rwl_t *rwl)
     rwl_release(rwl);
     return 0;
 }
-#else 
+#else
 #define rwl_init(rwl) (1)
 #define rwl_destroy(rwl) ((void)0)
 #define rwl_lock_shared(rwl) ((void)0)
@@ -874,12 +924,7 @@ static int rwl_upgrade_or_release(rwl_t *rwl)
 #define avmtx_destroy(mtx) ((void)0)
 #define avmtx_lock(mtx) ((void)0)
 #define avmtx_unlock(mtx) ((void)0)
-#define atomic_load_int32_relaxed(v) (*(v))
 
-static __inline void atomic_store_int32_release(int32_t *dest, int32_t value)
-{
-    *dest = value;
-}
 #endif
 
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
@@ -904,7 +949,7 @@ static __inline NodeRef ofs_to_nref(const avstor_off ofs)
 }
 
 #define is_nref_empty(n) (nref_to_ofs(n) == 0)
-#else 
+#else
 static __inline NodeRef ofs_to_nref(const avstor_off ofs)
 {
     NodeRef result;
@@ -1106,7 +1151,7 @@ static int io_commit(int fid)
     return fsync((int)fid) >= 0;
 }
 
-#if defined(__unix__) 
+#if defined(__unix__)
 
 static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
 {
@@ -1118,7 +1163,7 @@ static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
     return pwrite(db->file, buf, count, (off_t)pos);
 }
 
-#else 
+#else
 static int io_seek(int fid, avstor_off pos)
 {
 #if !defined(AVSTOR_CONFIG_FILE_64BIT) || defined(__DOS__)
@@ -1131,7 +1176,7 @@ static int io_seek(int fid, avstor_off pos)
     return _lseeki64(fid, (int64_t)pos, SEEK_SET) >= 0;
 #elif defined(__linux__)
     return lseek64(fid, (off64_t)pos, SEEK_SET) >= 0;
-#else 
+#else
 #error "64-bit io_seek not implemented for current platform."
 #endif
 #endif
@@ -1202,10 +1247,12 @@ static __inline void lock_page(AvPage *page)
 {
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
 #if !defined(NDEBUG)
-    int32_t prev =
+    int result = atomic_inc_int(&page->lock_count);
+    assert(result > 0);
+#else
+    (void)atomic_inc_int(&page->lock_count);
 #endif
-        atomic_inc_int32(&page->lock_count);
-    assert(prev >= 0);
+
 #else
     assert(page->lock_count >= 0);
     page->lock_count++;
@@ -1216,10 +1263,12 @@ static __inline void unlock_page(AvPage *page)
 {
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
 #if !defined(NDEBUG)
-    int32_t prev =
+    int result = atomic_dec_int(&page->lock_count);
+    assert(result >= 0);
+#else
+    (void)atomic_dec_int(&page->lock_count);
 #endif
-        atomic_dec_int32(&page->lock_count);
-    assert(prev > 0);
+
 #else
     assert(page->lock_count > 0);
     page->lock_count--;
@@ -1302,7 +1351,7 @@ static unsigned mask_to_power_of_two(unsigned x)
 }
 
 //static unsigned ulog2(unsigned x)
-//{    
+//{
 //    if (x > 1) {
 //        unsigned cnt = 0;
 //        while ((void)cnt++, x >>= 1)
@@ -1409,7 +1458,7 @@ static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
 
 static int write_page(avstor *db, AvPage* page)
 {
-    assert(atomic_load_int32_relaxed(&page->lock_count) == 0);
+    assert(atomic_load_int_acquire(&page->lock_count) == 0);
     if (is_page_dirty(page)) {
         int res;
         set_page_clean(page);
@@ -1472,7 +1521,7 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
             break;
         }
         else if (item->offset != 0 && item->load_time < min_age
-                 && atomic_load_int32_relaxed(&page->lock_count) == 0) {
+                 && atomic_load_int_acquire(&page->lock_count) == 0) {
             min_age = item->load_time;
             poldest = item;
         }
@@ -1580,7 +1629,7 @@ skip_evict:
     page = item->page;
     if (is_existing) {
         int result;
-        // If looking for existing page, we can load it into the empty (or evicted) page        
+        // If looking for existing page, we can load it into the empty (or evicted) page
         if (AVSTOR_OK != (result = read_page(db, page_ofs, page))) {
             rwl_release(&row->lock);
             THROW(result, "read_page() failed while reading page into cache");
@@ -1594,7 +1643,7 @@ skip_evict:
         item->load_time = 0;
     }
     item->offset = page_ofs;
-    atomic_store_int32_release(&page->lock_count, 1);
+    atomic_store_int_release(&page->lock_count, 1);
     rwl_release(&row->lock);
     return page;
 }
@@ -1712,7 +1761,7 @@ static unsigned get_page_free_space(AvPage* page)
     unsigned top = page->top;
     unsigned bottom = align_node(  //compensate for alignment
                                  offsetof(AvPage, nodes[page->index_count])
-                                 + (page->index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated      
+                                 + (page->index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated
     return (top > bottom) ? top - bottom : 0;
 }
 
@@ -1733,7 +1782,7 @@ static AvNode* lock_node_ex(avstor *db, const NodeRef *noderef)
     avstor_off pageofs, node_ofs;
     assert(noderef && !is_nref_empty(*noderef));
     node_page = get_ptr_page(noderef);
-    assert(atomic_load_int32_relaxed(&node_page->lock_count) > 0);  // page containging noderef should already be locked
+    assert(atomic_load_int_acquire(&node_page->lock_count) > 0);  // page containging noderef should already be locked
     node_ofs = nref_to_ofs(*noderef);
     pageofs = node_ofs & OFFSET_MASK;
     if (pageofs != node_page->page_offset) {
@@ -1761,7 +1810,7 @@ static AvNode* lock_unlock_node(avstor *db, const avstor_off ofs, AvNode *node_t
         return lock_node(db, ofs);
     }
     node_page = get_ptr_page(node_to_unlock);
-    assert(atomic_load_int32_relaxed(&node_page->lock_count) > 0);  // page containging noderef should already be locked
+    assert(atomic_load_int_acquire(&node_page->lock_count) > 0);  // page containging noderef should already be locked
     pageofs = ofs & OFFSET_MASK;
     if (pageofs != node_page->page_offset) {
         unlock_ptr(node_to_unlock);
@@ -1787,7 +1836,7 @@ static __inline void lock_ref(const NodeRef *noderef)
     // Outside shared cache row lock, we can only increment lock count of currently locked page.
     // Otherwise, a page currently being evicted might end up getting re-locked, which would be bad.
     // Header is exception, it is never in the cache
-    assert(atomic_load_int32_relaxed(&page->lock_count) > 0 || page->page_offset == 0);
+    assert(atomic_load_int_acquire(&page->lock_count) > 0 || page->page_offset == 0);
     lock_page(page);
 }
 
@@ -2101,7 +2150,7 @@ static void remove_node(avstor *db, AvNode *node, AvStack *st)
             unlock_ptr(ref);
             ref = &succ->left;
             //lock_ref(ref);
-            //unlock_ptr(succ);            
+            //unlock_ptr(succ);
             succ = lock_node_ex(db, ref);
         }
         assign_nref(node->left, &succ->left);
@@ -2154,7 +2203,7 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
 
     if (preferred_page && size <= get_page_free_space(preferred_page)) {
         page = preferred_page;
-        assert(atomic_load_int32_relaxed(&page->lock_count) > 0);
+        assert(atomic_load_int_acquire(&page->lock_count) > 0);
         lock_page(page);
         set_page_dirty(page);
     }
@@ -2432,7 +2481,7 @@ int AVCALL avs_check_cache_consistency(avstor *db)
             if (!page) {
                 break;
             }
-            else if (atomic_load_int32_relaxed(&page->lock_count) != 0)  {
+            else if (atomic_load_int_acquire(&page->lock_count) != 0)  {
                 return AVSTOR_CORRUPT;
             }
         }
@@ -2487,9 +2536,7 @@ static void rollback(avstor *db)
                     //page->page_offset = 0;
                     line->items[col].offset = 0;
                 }
-                if (atomic_load_int32_relaxed(&page->lock_count) != 0) {
-                    atomic_store_int32_release(&page->lock_count, 0);
-                }
+                atomic_store_int_release(&page->lock_count, 0);
             }
         }
     }
@@ -2737,7 +2784,7 @@ static int create_fixed64_value(const avstor_node *parent, const avstor_key *key
         AvNodeData *pdata;
         parent_node = lock_keyref(parent);
         pdata = get_node_data(parent_node);
-        if ((fnode = find_node_with_backtrace(db, key, &st, &pdata->vkey.value_root , &last_ref))) {        
+        if ((fnode = find_node_with_backtrace(db, key, &st, &pdata->vkey.value_root , &last_ref))) {
             unlock_ptr(fnode);
             THROW(AVSTOR_EXISTS, MSG_NODE_EXISTS);
         }
@@ -3362,7 +3409,7 @@ int AVCALL avstor_get_name(const avstor_node *value, avstor_key *key)
     avstor *db;
     CHECK_PARAM(value && value->db && key);
     db = value->db;
-#else 
+#else
     CHECK_PARAM(value && value->db && key);
 #endif
 
@@ -3397,7 +3444,7 @@ int AVCALL avstor_get_type(const avstor_node* value, unsigned *out_type)
     avstor *db;
     CHECK_PARAM(value && value->db && out_type);
     db = value->db;
-#else 
+#else
     CHECK_PARAM(value && value->db && out_type);
 #endif
 

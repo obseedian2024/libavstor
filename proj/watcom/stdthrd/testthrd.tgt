@@ -7,12 +7,12 @@ MComponent
 0
 2
 WString
-3
-LIB
+4
+OEXE
 3
 WString
 5
-o_6sn
+oc6en
 1
 0
 1
@@ -21,92 +21,95 @@ MCommand
 0
 5
 MCommand
-25
-copy libavstor.lib ..\bin
+24
+copy testthrd.exe ..\bin
 6
 MItem
-13
-libavstor.lib
+12
+testthrd.exe
 7
 WString
-3
-LIB
+4
+OEXE
 8
 WVList
-0
+2
 9
-WVList
-1
+MVState
 10
-ActionStates
+WString
+7
+WINLINK
 11
 WString
-5
-&Make
+11
+?????Stack:
+1
 12
+WString
+4
+4096
+0
+13
+MVState
+14
+WString
+7
+WINLINK
+15
+WString
+22
+???e?Library files(,):
+1
+16
+WString
+11
+stdthrd.lib
+0
+17
 WVList
 0
 -1
 1
 1
 0
-13
+18
 WPickList
-4
-14
+2
+19
 MItem
 3
 *.c
-15
+20
 WString
 4
 COBJ
-16
-WVList
-20
-17
-MVState
-18
-WString
-3
-WCC
-19
-WString
-23
-?????Macro definitions:
-1
-20
-WString
-28
-AVSTOR_CONFIG_THREAD_SAFEx=1
-0
 21
-MCState
+WVList
+16
 22
+MCState
+23
 WString
 3
 WCC
-23
+24
 WString
 31
 ?????Force enums to be type int
 1
 1
-24
-MVState
 25
+MRState
+26
 WString
 3
 WCC
-26
-WString
-19
-?????Other options:
-1
 27
 WString
 21
--i="..\..\..\include"
+?????No optimizations
+1
 0
 28
 MRState
@@ -116,20 +119,20 @@ WString
 WCC
 30
 WString
-21
-?????No optimizations
+26
+?????Fastest possible code
 1
-0
+1
 31
-MRState
+MCState
 32
 WString
 3
 WCC
 33
 WString
-26
-?????Fastest possible code
+33
+?????Disable stack depth checking
 1
 1
 34
@@ -140,8 +143,8 @@ WString
 WCC
 36
 WString
-33
-?????Disable stack depth checking
+22
+?????Branch prediction
 1
 1
 37
@@ -152,8 +155,8 @@ WString
 WCC
 39
 WString
-22
-?????Branch prediction
+23
+?????Loop optimizations
 1
 1
 40
@@ -164,8 +167,8 @@ WString
 WCC
 42
 WString
-23
-?????Loop optimizations
+19
+?????Loop unrolling
 1
 1
 43
@@ -176,8 +179,8 @@ WString
 WCC
 45
 WString
-19
-?????Loop unrolling
+30
+?????Call/return optimizations
 1
 1
 46
@@ -188,8 +191,8 @@ WString
 WCC
 48
 WString
-30
-?????Call/return optimizations
+32
+?????In-line intrinsic functions
 1
 1
 49
@@ -200,8 +203,8 @@ WString
 WCC
 51
 WString
-32
-?????In-line intrinsic functions
+27
+?????Instruction scheduling
 1
 1
 52
@@ -212,37 +215,37 @@ WString
 WCC
 54
 WString
-27
-?????Instruction scheduling
+33
+?????Allow repeated optimizations
 1
 1
 55
-MCState
+MVState
 56
 WString
 3
 WCC
 57
 WString
-33
-?????Allow repeated optimizations
-1
-1
-58
-MVState
-59
-WString
-3
-WCC
-60
-WString
 29
 ?????Expand function in-line:
 1
-61
+58
 WString
 2
 20
+1
+59
+MCState
+60
+WString
+3
+WCC
+61
+WString
+30
+o????Multithreaded application
+1
 1
 62
 MCState
@@ -252,8 +255,8 @@ WString
 WCC
 64
 WString
-30
-o????Multithreaded application
+31
+???e?SS not assumed equal to DS
 1
 1
 65
@@ -264,8 +267,8 @@ WString
 WCC
 67
 WString
-21
-?????Compiler default
+9
+??6??8086
 1
 0
 68
@@ -276,104 +279,32 @@ WString
 WCC
 70
 WString
-17
-?????DS can float
-1
-1
-71
-MCState
-72
-WString
-3
-WCC
-73
-WString
-31
-???s?SS not assumed equal to DS
-1
-1
-74
-MRState
-75
-WString
-3
-WCC
-76
-WString
-9
-??6??8086
-1
-0
-77
-MRState
-78
-WString
-3
-WCC
-79
-WString
 10
 ??6??80486
 1
 1
-80
+71
 WVList
 0
 -1
 1
 1
 0
-81
+72
 MItem
-21
-..\..\..\src\avstor.c
-82
+23
+..\..\..\threads\test.c
+73
 WString
 4
 COBJ
-83
+74
 WVList
 0
-84
+75
 WVList
 0
-14
-1
-1
-0
-85
-MItem
-3
-*.h
-86
-WString
-3
-NIL
-87
-WVList
-0
-88
-WVList
-0
--1
-1
-1
-0
-89
-MItem
-25
-..\..\..\include\avstor.h
-90
-WString
-3
-NIL
-91
-WVList
-0
-92
-WVList
-0
-85
+19
 1
 1
 0
