@@ -81,9 +81,9 @@ struct queue *queue_create(const size_t length)
     return queue;
 }
 
-void queue_free(struct queue* queue)
+void queue_free(struct queue *queue)
 {
-        free(queue);
+    free(queue);
 }
 
 int queue_tryenqueue(struct queue *queue, long item)
@@ -222,15 +222,15 @@ int main(void)
     }
 
     mtx_lock(&_mtx_done);
-        while (done > 0) {
-                cnd_wait(&_cnd_done, &_mtx_done);
-        }
-        mtx_unlock(&_mtx_done);
+    while (done > 0) {
+        cnd_wait(&_cnd_done, &_mtx_done);
+    }
+    mtx_unlock(&_mtx_done);
 
-        mtx_lock(&_mtx_queue);
-        die = 1;
-        cnd_broadcast(&_cnd_not_empty);
-        mtx_unlock(&_mtx_queue);
+    mtx_lock(&_mtx_queue);
+    die = 1;
+    cnd_broadcast(&_cnd_not_empty);
+    mtx_unlock(&_mtx_queue);
 
     for (i = 0; i < total_prod; i++)
     {
