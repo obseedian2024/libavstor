@@ -132,7 +132,7 @@
 #define offsetof(t, d)          ((size_t)&((t*)(0))->d)
 #endif
 
-#if (defined(_WIN32) && !defined(_WINDLL)) || defined(__unix__) || defined(__OS2__)
+#if (defined(_WIN32) && !defined(_WINDLL)) || defined(__unix__)
 #if defined(__WATCOMC__) || defined(_MSC_VER)
 #define THREAD_LOCAL __declspec(thread)
 #elif defined(__clang__) || defined(__GNUC__)
@@ -141,7 +141,7 @@
 #define THREAD_LOCAL
 #error "Define THREAD_LOCAL for compiler"
 #endif
-#elif defined(__DOS__) || defined(_DOS) || defined(MSDOS)
+#elif defined(__DOS__) || defined(_DOS) || defined(MSDOS) || defined(__OS2__)
 #define THREAD_LOCAL
 #elif !defined(_WINDLL)
 #define THREAD_LOCAL
@@ -275,7 +275,7 @@ typedef struct ExceptionFrame
     int                     line_no;
 } ExceptionFrame;
 
-#if defined(_WINDLL)
+#if defined(_WINDLL) || defined(__OS2__)
 typedef struct AvTLSData {
     ExceptionFrame          *tls_cur_ex;
     const char              *tls_last_err_msg;
@@ -589,6 +589,13 @@ static DWORD tls_idx;
 #define cur_ex              ((AvTLSData*)TlsGetValue(tls_idx))->tls_cur_ex
 #define last_err_msg        ((AvTLSData*)TlsGetValue(tls_idx))->tls_last_err_msg
 
+#elif defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE)
+// thread locals don't work under OS/2 and Watcom
+static tss_t tls_idx;
+
+#define cur_ex              ((AvTLSData*)tss_get(tls_idx))->tls_cur_ex
+#define last_err_msg        ((AvTLSData*)tss_get(tls_idx))->tls_last_err_msg
+
 #else
 static
 THREAD_LOCAL
@@ -597,6 +604,14 @@ ExceptionFrame *cur_ex = NULL;
 static
 THREAD_LOCAL
 const char* last_err_msg = NULL;
+#endif
+
+#if defined(_WINDLL) || (defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE))
+static void init_tls_vars(void)
+{
+    cur_ex = NULL;
+    last_err_msg = NULL;
+}
 #endif
 
 #define is_invalid_avstor_key(key)   ((key)->len > MAX_KEY_LEN)
@@ -3291,10 +3306,43 @@ static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
     }
 }
 
+#if defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE)
+
+once_flag init_tls_flag = ONCE_FLAG_INIT;
+
+static void avstor_destroy_tls(void* tls_data)
+{
+    if (tls_data) {
+        free(tls_data);
+    }
+}
+
+static void avstor_init_tls(void)
+{
+    AvTLSData *ptr;
+
+    if (tss_create(&tls_idx, avstor_destroy_tls) != thrd_success) {
+        fprintf(stderr, "libavstor: FATAL: Failed to initialize TLS index\n");
+        abort();
+    }
+    if (!(ptr = malloc(sizeof(*ptr)))) {
+        tss_delete(tls_idx);
+        fprintf(stderr, "libavstor: FATAL: Failed to allocate TLS storage\n");
+        abort();
+    }
+    tss_set(tls_idx, ptr);
+    init_tls_vars();
+}
+#endif
+
 int AVCALL avstor_open(avstor **pdb, const char* filename, unsigned szcache, int oflags)
 {
     avstor *db;
     int result;
+
+#if defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE)
+    call_once(&init_tls_flag, avstor_init_tls);
+#endif
 
     CHECK_PARAM(pdb && filename);
     if (((oflags & AVSTOR_OPEN_CREATE) && (oflags & AVSTOR_OPEN_READONLY))
@@ -3797,11 +3845,6 @@ const char* AVCALL avstor_get_errstr(void)
 }
 
 #if defined(_WINDLL)
-static void init_tls_vars(void)
-{
-    cur_ex = NULL;
-    last_err_msg = NULL;
-}
 
 static void tls_dealloc(void)
 {

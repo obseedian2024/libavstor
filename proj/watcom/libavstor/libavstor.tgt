@@ -63,7 +63,7 @@ WString
 COBJ
 16
 WVList
-20
+21
 17
 MVState
 18
@@ -77,8 +77,8 @@ WString
 1
 20
 WString
-28
-AVSTOR_CONFIG_THREAD_SAFEx=1
+27
+AVSTOR_CONFIG_THREAD_SAFE=1
 0
 21
 MCState
@@ -93,32 +93,32 @@ WString
 1
 1
 24
-MVState
+MRState
 25
 WString
 3
 WCC
 26
 WString
-19
-?????Other options:
-1
-27
-WString
 21
--i="..\..\..\include"
+?????Compiler default
+1
 0
+27
+MVState
 28
-MRState
-29
 WString
 3
 WCC
+29
+WString
+19
+?????Other options:
+1
 30
 WString
 21
-?????No optimizations
-1
+-i="..\..\..\include"
 0
 31
 MRState
@@ -128,20 +128,20 @@ WString
 WCC
 33
 WString
-26
-?????Fastest possible code
+21
+?????No optimizations
 1
-1
+0
 34
-MCState
+MRState
 35
 WString
 3
 WCC
 36
 WString
-33
-?????Disable stack depth checking
+26
+?????Fastest possible code
 1
 1
 37
@@ -152,8 +152,8 @@ WString
 WCC
 39
 WString
-22
-?????Branch prediction
+33
+?????Disable stack depth checking
 1
 1
 40
@@ -164,8 +164,8 @@ WString
 WCC
 42
 WString
-23
-?????Loop optimizations
+22
+?????Branch prediction
 1
 1
 43
@@ -176,8 +176,8 @@ WString
 WCC
 45
 WString
-19
-?????Loop unrolling
+23
+?????Loop optimizations
 1
 1
 46
@@ -188,8 +188,8 @@ WString
 WCC
 48
 WString
-30
-?????Call/return optimizations
+19
+?????Loop unrolling
 1
 1
 49
@@ -200,8 +200,8 @@ WString
 WCC
 51
 WString
-32
-?????In-line intrinsic functions
+30
+?????Call/return optimizations
 1
 1
 52
@@ -212,8 +212,8 @@ WString
 WCC
 54
 WString
-27
-?????Instruction scheduling
+32
+?????In-line intrinsic functions
 1
 1
 55
@@ -224,50 +224,50 @@ WString
 WCC
 57
 WString
-33
-?????Allow repeated optimizations
+27
+?????Instruction scheduling
 1
 1
 58
-MVState
+MCState
 59
 WString
 3
 WCC
 60
 WString
+33
+?????Allow repeated optimizations
+1
+1
+61
+MVState
+62
+WString
+3
+WCC
+63
+WString
 29
 ?????Expand function in-line:
 1
-61
+64
 WString
 2
 20
 1
-62
-MCState
-63
-WString
-3
-WCC
-64
-WString
-30
-o????Multithreaded application
-1
-1
 65
-MRState
+MCState
 66
 WString
 3
 WCC
 67
 WString
-21
-?????Compiler default
+30
+o????Multithreaded application
 1
-0
+1
 68
 MRState
 69
@@ -276,34 +276,34 @@ WString
 WCC
 70
 WString
-17
-?????DS can float
+21
+?????Compiler default
 1
-1
+0
 71
-MCState
+MRState
 72
 WString
 3
 WCC
 73
 WString
-31
-???s?SS not assumed equal to DS
+17
+?????DS can float
 1
 1
 74
-MRState
+MCState
 75
 WString
 3
 WCC
 76
 WString
-9
-??6??8086
+31
+???s?SS not assumed equal to DS
 1
-0
+1
 77
 MRState
 78
@@ -312,68 +312,80 @@ WString
 WCC
 79
 WString
+9
+??6??8086
+1
+0
+80
+MRState
+81
+WString
+3
+WCC
+82
+WString
 10
 ??6??80486
 1
 1
-80
+83
 WVList
 0
 -1
 1
 1
 0
-81
+84
 MItem
 21
 ..\..\..\src\avstor.c
-82
+85
 WString
 4
 COBJ
-83
+86
 WVList
 0
-84
+87
 WVList
 0
 14
 1
 1
 0
-85
+88
 MItem
 3
 *.h
-86
+89
 WString
 3
 NIL
-87
+90
 WVList
 0
-88
+91
 WVList
 0
 -1
 1
 1
 0
-89
+92
 MItem
 25
 ..\..\..\include\avstor.h
-90
+93
 WString
 3
 NIL
-91
+94
 WVList
 0
-92
+95
 WVList
 0
-85
+88
 1
 1
 0
