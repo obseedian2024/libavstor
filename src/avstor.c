@@ -407,7 +407,7 @@ struct AvPage {
             // INVALID_INDEX if at the end of the list.
             // variable size actually, should be flexible array but to support old compilers
             // it is done this way
-            uint16_t            nodes[2080];
+            uint16_t            nodes[1];
         };
     };
 };
