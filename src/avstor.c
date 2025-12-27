@@ -1444,30 +1444,29 @@ err_rwl_init:
 
 static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
 {
-    //PageCache *cache = &avs->cache;
     uint32_t checksum;
-    int numread;
-    numread = io_read(db, page, page_offset, PAGE_SIZE);
-    if (0 == numread) {
-        //THROW(AVSTOR_IOERR, "page offset beyond EOF.");
-        return AVSTOR_IOERR;
+    int numread = io_read(db, page, page_offset, PAGE_SIZE);
+
+    if (!numread) {
+        RETURN(AVSTOR_IOERR, "page offset beyond EOF.");
     }
     else if (numread < 0) {
-        //THROW(AVSTOR_IOERR, "fread failed.");
-        return AVSTOR_IOERR;
+        RETURN(AVSTOR_IOERR, "io_read() failed.");
     }
     else if (numread < PAGE_SIZE) {
-        return AVSTOR_CORRUPT;
-        //THROW(AVSTOR_CORRUPT, "fread read fewer than expected bytes.");
+        RETURN(AVSTOR_CORRUPT, "io_read() read fewer than expected bytes.");
     }
+
     checksum = page->checksum;
     page->checksum = 0;
     if (checksum != compute_page_checksum(page)) {
-        //THROW(AVSTOR_CORRUPT, "page checksum error.");
         page->checksum = checksum;
-        return AVSTOR_CORRUPT;
+        RETURN(AVSTOR_CORRUPT, "page checksum error.");
     }
-    page->checksum = checksum; // cache->l2_lru_count;
+    page->checksum = checksum;
+
+    // TODO: validate page more rigorously for security
+
     return AVSTOR_OK;
 }
 
@@ -1481,7 +1480,7 @@ static int write_page(avstor *db, AvPage* page)
         res = io_write(db, page, page->page_offset, PAGE_SIZE);
         if (res < PAGE_SIZE) {
             set_page_dirty(page);
-            return AVSTOR_IOERR;
+            RETURN(AVSTOR_IOERR, "io_write() failed.");
         }
     }
     return AVSTOR_OK;
