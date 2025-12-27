@@ -43,7 +43,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <setjmp.h>
 
 #elif defined(_WIN32)
 
@@ -71,7 +70,6 @@ struct _tld {
     thrd_t          thr;
 #if defined(__OS2__)
     struct _tld     *next_detach;
-    jmp_buf         env_exit;
     cnd_t           cnd_exited;
     cnd_t           cnd_joined;
     mtx_t           mtx_exit;
@@ -453,7 +451,6 @@ threadproc(void *arglist)
 {
     struct _tld tdata;
     thrd_start_t p_func = ThrdFunc;
-    unsigned i;
 
     memset(&tdata, 0, sizeof(tdata));
     tdata.tls_data = calloc(MAX_TLS_KEY + 1, sizeof(void*));
@@ -481,58 +478,8 @@ threadproc(void *arglist)
 
     DosSemClear(&ThrdInitSem);
 
-    // run the caller's thread proc
-    if (!setjmp(tdata.env_exit)) {
-        tdata.exit_code = p_func(arglist);
-    }
-
-    // Call TLS destructors
-    mtx_lock(&mtx_tls);
-    for (i = 0; i <= MAX_TLS_KEY; i++) {
-        if (TLSIndexMap[i] && TLSDestructors[i]) {
-            mtx_unlock(&mtx_tls);
-            TLSDestructors[i](tdata.tls_data[i]);
-            mtx_lock(&mtx_tls);
-        }
-    }
-
-    // Free TLS data
-    if (tdata.tls_data) {
-        free(tdata.tls_data);
-        tdata.tls_data = NULL;
-    }
-    mtx_unlock(&mtx_tls);
-
-    // signal thread_join that the thread has exited and the exit_code can be picked up
-    mtx_lock(&tdata.mtx_exit);
-    tdata.thread_state |= tstate_exited;
-    cnd_signal(&tdata.cnd_exited);
-    mtx_unlock(&tdata.mtx_exit);
-
-    // synchronize with thread_join or thread_detach
-    mtx_lock(&tdata.mtx_joined);
-    while (!(tdata.thread_state & (tstate_joined | tstate_detached))) {
-        cnd_wait(&tdata.cnd_joined, &tdata.mtx_joined);
-    }
-    mtx_unlock(&tdata.mtx_joined);
-
-    // If detaching, add ourselves to cleanup queue
-    if (tdata.thread_state & tstate_detached) {
-        mtx_lock(&mtx_detach);
-        tdata.next_detach = thread_data_list;
-        thread_data_list = &tdata;
-        cnd_signal(&cnd_detach);
-        mtx_unlock(&mtx_detach);
-    }
-
-    // Wait until allowed to die
-    mtx_lock(&tdata.mtx_joined);
-    while (!(tdata.thread_state & tstate_die)) {
-        cnd_wait(&tdata.cnd_joined, &tdata.mtx_joined);
-    }
-    mtx_unlock(&tdata.mtx_joined);
-
-    _endthread();
+    // run the caller's thread proc and exit thread
+    thrd_exit(p_func(arglist));
 }
 
 int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
@@ -594,8 +541,57 @@ __declspec(noreturn)
 void __cdecl thrd_exit(int res)
 {
     struct _tld *tdata = THREAD_DATA;
+    unsigned i;
+
     tdata->exit_code = res;
-    longjmp(tdata->env_exit, 1);
+
+    // Call TLS destructors
+    mtx_lock(&mtx_tls);
+    for (i = 0; i <= MAX_TLS_KEY; i++) {
+        if (TLSIndexMap[i] && TLSDestructors[i]) {
+            mtx_unlock(&mtx_tls);
+            TLSDestructors[i](tdata->tls_data[i]);
+            mtx_lock(&mtx_tls);
+        }
+    }
+
+    // Free TLS data
+    if (tdata->tls_data) {
+        free(tdata->tls_data);
+        tdata->tls_data = NULL;
+    }
+    mtx_unlock(&mtx_tls);
+
+    // signal thread_join that the thread has exited and the exit_code can be picked up
+    mtx_lock(&tdata->mtx_exit);
+    tdata->thread_state |= tstate_exited;
+    cnd_signal(&tdata->cnd_exited);
+    mtx_unlock(&tdata->mtx_exit);
+
+    // synchronize with thread_join or thread_detach
+    mtx_lock(&tdata->mtx_joined);
+    while (!(tdata->thread_state & (tstate_joined | tstate_detached))) {
+        cnd_wait(&tdata->cnd_joined, &tdata->mtx_joined);
+    }
+    mtx_unlock(&tdata->mtx_joined);
+
+    // If detaching, add ourselves to cleanup queue
+    if (tdata->thread_state & tstate_detached) {
+        mtx_lock(&mtx_detach);
+        tdata->next_detach = thread_data_list;
+        thread_data_list = tdata;
+        cnd_signal(&cnd_detach);
+        mtx_unlock(&mtx_detach);
+    }
+
+    // Wait until allowed to die
+    mtx_lock(&tdata->mtx_joined);
+    while (!(tdata->thread_state & tstate_die)) {
+        cnd_wait(&tdata->cnd_joined, &tdata->mtx_joined);
+    }
+    mtx_unlock(&tdata->mtx_joined);
+
+    _endthread();
 }
 
 int __cdecl thrd_detach(thrd_t thr)
