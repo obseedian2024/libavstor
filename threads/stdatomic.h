@@ -163,6 +163,8 @@ extern int __locked_fetch_add_impl(volatile atomic_int *obj, const int value);
 
 #elif defined(_MSC_VER)
 
+#pragma warning( disable : 4035 )
+
 static __inline int __cdecl
 __locked_exchange_impl(volatile atomic_int *obj, const int desired)
 {
@@ -268,7 +270,7 @@ __locked_compare_exchange_impl(volatile atomic_int *obj, int *expected, const in
         lock cmpxchg [ecx], ebx
         je succ
         mov [edx], eax
-      succ:
+        succ:
         setz al
     }
 }
@@ -284,6 +286,8 @@ __locked_fetch_add_impl(volatile atomic_int *obj, const int value)
 }
 
 #endif // _M_IX86 >= 400
+
+#pragma warning( default : 4035 )
 
 #endif // _MSC_VER
 

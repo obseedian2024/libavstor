@@ -39,7 +39,7 @@
 #include "stdatomic.h"
 #include "threads.h"
 
-#define iterations 100000
+#define iterations 1000000
 #define total_prod 4
 #define total_cons 4
 #define QUEUE_SIZE 512
@@ -250,7 +250,7 @@ int main(void)
 
     end_time = clock();
     diff = (double)(end_time - start_time) / CLOCKS_PER_SEC;
-    printf("Sum = %lli\n", total);
+    printf("Sum = %I64i\n", total);
     printf("Elapsed time: %f\n", diff);
     printf("Iterations per ms: %4.8G\n", (double)iterations / diff / 1000.0);
     return 0;

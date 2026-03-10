@@ -55,6 +55,12 @@
 
 #include "stdatomic.h"
 
+#if defined(_MSC_VER) && _MSC_VER < 1200
+#define NORETURN
+#else
+#define NORETURN __declspec(noreturn)
+#endif
+
 enum {
     thrd_success,
     thrd_nomem,
@@ -147,7 +153,7 @@ thrd_t __cdecl thrd_current(void);
 int __cdecl thrd_detach(thrd_t thr);
 int __cdecl thrd_equal(thrd_t lhs, thrd_t rhs);
 
-__declspec(noreturn)
+NORETURN
 void __cdecl thrd_exit(int res);
 int __cdecl thrd_join(thrd_t thr, int* res);
 int __cdecl thrd_sleep(const struct timespec* duration, struct timespec* remaining);
@@ -168,7 +174,7 @@ int __cdecl cnd_wait(cnd_t* cond, mtx_t* mtx);
 int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor);
 int __cdecl tss_delete(tss_t tss_id);
 int __cdecl tss_set(tss_t tss_id, void *val);
-void __cdecl *tss_get(tss_t tss_key);
+void* __cdecl tss_get(tss_t tss_key);
 
 void __cdecl call_once(once_flag* flag, void(*_Func)(void));
 

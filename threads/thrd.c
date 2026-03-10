@@ -179,7 +179,7 @@ int __cdecl thrd_equal(thrd_t lhs, thrd_t rhs)
     return lhs._ThreadID == rhs._ThreadID;
 }
 
-__declspec(noreturn)
+NORETURN
 void __cdecl thrd_exit(int res)
 {
     _endthreadex((DWORD)res);
@@ -263,7 +263,7 @@ int __cdecl tss_set(tss_t tss_id, void *val)
     return TlsSetValue(tss_id._key, val) ? thrd_success : thrd_error;
 }
 
-void __cdecl *tss_get(tss_t tss_key)
+void* __cdecl tss_get(tss_t tss_key)
 {
     void *result = TlsGetValue(tss_key._key);
     if (!result && GetLastError() != ERROR_SUCCESS) {
