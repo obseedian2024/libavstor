@@ -144,7 +144,7 @@ static void show_help(void)
            "\twhere # [#...] is a list of space-separated integers specifying the\n"
            "\tnumber of keys in each subtree of the level, with the top level\n"
            "\tbeing mandatory.\n\n"
-           "Example: avcrdb test.db 100 50 200\n"
+           "Example: avscrdb test.db 100 50 200\n"
            "\twill create a file called test.db with a hierarchy of 3 levels,\n"
            "\t100 nodes in the first level, each of those nodes having 50\n"
            "\tchildren each, and each of those having 200 children.\n");
