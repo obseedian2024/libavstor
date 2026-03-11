@@ -754,3 +754,8 @@ void __cdecl call_once(once_flag *_flag, void(*_func)(void))
         }
     }
 }
+
+void __cdecl _thrd_initlib(void)
+{
+    call_once(&init_stdthread_flag, init_stdthread);
+}

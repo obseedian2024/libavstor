@@ -146,6 +146,7 @@ extern void* __ThreadStackAddr;
 
 typedef int (__cdecl *thrd_start_t)(void*);
 
+void __cdecl _thrd_initlib(void);
 int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size);
 int __cdecl thrd_create(thrd_t *thr, thrd_start_t func, void *arg);
 
