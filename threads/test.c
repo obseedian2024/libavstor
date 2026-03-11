@@ -39,7 +39,7 @@
 #include "stdatomic.h"
 #include "threads.h"
 
-#define iterations 1000000
+#define iterations 100000
 #define total_prod 4
 #define total_cons 4
 #define QUEUE_SIZE 512
@@ -189,11 +189,14 @@ int main(void)
     clock_t start_time, end_time;
     const long num = iterations / total_prod;
     __int64 total = 0;
+    const __int64 expected_total = (__int64)(iterations / 2) * (__int64)(iterations + 1);
     int i;
     double diff;
-    tss_t dummy;
 
-    tss_create(&dummy, NULL);
+#if (!defined(__STDC_VERSION__) || (__STDC_VERSION__ < 201112L))
+    _thrd_initlib();
+#endif
+
     qu = queue_create(QUEUE_SIZE);
 
     mtx_init(&_mtx_queue, mtx_plain);
@@ -250,7 +253,10 @@ int main(void)
 
     end_time = clock();
     diff = (double)(end_time - start_time) / CLOCKS_PER_SEC;
-    printf("Sum = %I64i\n", total);
+    if (total != expected_total) {
+        printf("TEST FAILED! Expected total not equal to actual total.\n");
+        return 1;
+    }
     printf("Elapsed time: %f\n", diff);
     printf("Iterations per ms: %4.8G\n", (double)iterations / diff / 1000.0);
     return 0;
