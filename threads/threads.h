@@ -61,6 +61,10 @@
 #define NORETURN __declspec(noreturn)
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
     thrd_success,
     thrd_nomem,
@@ -184,5 +188,8 @@ void __cdecl _usem_destroy(struct _usem *sem);
 int __cdecl _usem_acquire(struct _usem *sem);
 int __cdecl _usem_release(struct _usem *sem);
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif
