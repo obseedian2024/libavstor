@@ -36,8 +36,17 @@
 #include <stdlib.h>
 #include <time.h>
 
+#if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L))
+
+#include <stdatomic.h>
+#include <threads.h>
+
+#else
+
 #include "stdatomic.h"
 #include "threads.h"
+
+#endif
 
 #define iterations 100000
 #define total_prod 4
