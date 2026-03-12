@@ -3320,6 +3320,8 @@ static void avstor_init_tls(void)
 {
     AvTLSData *ptr;
 
+    _thrd_initlib();
+
     if (tss_create(&tls_idx, avstor_destroy_tls) != thrd_success) {
         fprintf(stderr, "libavstor: FATAL: Failed to initialize TLS index\n");
         abort();
