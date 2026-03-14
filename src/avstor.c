@@ -1112,7 +1112,7 @@ static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
     ZeroMemory(&ovlp, sizeof(ovlp));
     ovlp.Offset = (DWORD)pos;
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
-    ovlp.OffsetHigh = pos >> 32;
+    ovlp.OffsetHigh = (DWORD)(pos >> 32);
 #endif
     if (!ReadFile((HANDLE)(intptr_t)db->file, buf, count, &bytes, &ovlp)) {
         return GetLastError() == ERROR_HANDLE_EOF ? 0 : -1;
@@ -1127,7 +1127,7 @@ static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
     ZeroMemory(&ovlp, sizeof(ovlp));
     ovlp.Offset = (DWORD)pos;
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
-    ovlp.OffsetHigh = pos >> 32;
+    ovlp.OffsetHigh = (DWORD)(pos >> 32);
 #endif
     if (!WriteFile((HANDLE)(intptr_t)db->file, buf, count, &bytes, &ovlp)) {
         return -1;
