@@ -60,7 +60,7 @@ NULL=nul
 !ENDIF 
 ################################################################################
 # Begin Project
-# PROP Target_Last_Scanned "stdthrd - Win32 Debug"
+# PROP Target_Last_Scanned "avstor - Win32 Debug"
 
 !IF  "$(CFG)" == "avstest - Win32 Release"
 
@@ -77,14 +77,15 @@ NULL=nul
 OUTDIR=.\bin\Release
 INTDIR=.\avstest\Release
 
-ALL : "avstor - Win32 Release" "stdthrd - Win32 Release" "$(OUTDIR)\build.exe"
+ALL : "avstor - Win32 Release" "stdthrd - Win32 Release"\
+ "$(OUTDIR)\avstest.exe"
 
 CLEAN : 
 	-@erase "$(INTDIR)\avsdb.obj"
 	-@erase "$(INTDIR)\avstest.obj"
 	-@erase "$(INTDIR)\timer.obj"
 	-@erase "$(INTDIR)\tst_dfs.obj"
-	-@erase "$(OUTDIR)\build.exe"
+	-@erase "$(OUTDIR)\avstest.exe"
 
 "$(OUTDIR)" :
     if not exist "$(OUTDIR)/$(NULL)" mkdir "$(OUTDIR)"
@@ -129,12 +130,12 @@ BSC32_SBRS= \
 	
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /machine:I386
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /machine:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /machine:I386 /out:"bin\Release/avstest.exe"
 # SUBTRACT LINK32 /debug
 LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib\
  advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo\
- /subsystem:console /incremental:no /pdb:"$(OUTDIR)/build.pdb" /machine:I386\
- /out:"$(OUTDIR)/build.exe" 
+ /subsystem:console /incremental:no /pdb:"$(OUTDIR)/avstest.pdb" /machine:I386\
+ /out:"$(OUTDIR)/avstest.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\avsdb.obj" \
 	"$(INTDIR)\avstest.obj" \
@@ -143,7 +144,7 @@ LINK32_OBJS= \
 	"$(OUTDIR)\avstor.lib" \
 	"$(OUTDIR)\stdthrd.lib"
 
-"$(OUTDIR)\build.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
+"$(OUTDIR)\avstest.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
     $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -163,7 +164,7 @@ LINK32_OBJS= \
 OUTDIR=.\bin\Debug
 INTDIR=.\avstest\Debug
 
-ALL : "avstor - Win32 Debug" "stdthrd - Win32 Debug" "$(OUTDIR)\build.exe"
+ALL : "avstor - Win32 Debug" "stdthrd - Win32 Debug" "$(OUTDIR)\avstest.exe"
 
 CLEAN : 
 	-@erase "$(INTDIR)\avsdb.obj"
@@ -172,9 +173,9 @@ CLEAN :
 	-@erase "$(INTDIR)\tst_dfs.obj"
 	-@erase "$(INTDIR)\vc40.idb"
 	-@erase "$(INTDIR)\vc40.pdb"
-	-@erase "$(OUTDIR)\build.exe"
-	-@erase "$(OUTDIR)\build.ilk"
-	-@erase "$(OUTDIR)\build.pdb"
+	-@erase "$(OUTDIR)\avstest.exe"
+	-@erase "$(OUTDIR)\avstest.ilk"
+	-@erase "$(OUTDIR)\avstest.pdb"
 
 "$(OUTDIR)" :
     if not exist "$(OUTDIR)/$(NULL)" mkdir "$(OUTDIR)"
@@ -220,11 +221,11 @@ BSC32_SBRS= \
 	
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /debug /machine:I386
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /debug /machine:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /debug /machine:I386 /out:"bin\Debug/avstest.exe"
 LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib\
  advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo\
- /subsystem:console /incremental:yes /pdb:"$(OUTDIR)/build.pdb" /debug\
- /machine:I386 /out:"$(OUTDIR)/build.exe" 
+ /subsystem:console /incremental:yes /pdb:"$(OUTDIR)/avstest.pdb" /debug\
+ /machine:I386 /out:"$(OUTDIR)/avstest.exe" 
 LINK32_OBJS= \
 	"$(INTDIR)\avsdb.obj" \
 	"$(INTDIR)\avstest.obj" \
@@ -233,7 +234,7 @@ LINK32_OBJS= \
 	"$(OUTDIR)\avstor.lib" \
 	"$(OUTDIR)\stdthrd.lib"
 
-"$(OUTDIR)\build.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
+"$(OUTDIR)\avstest.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
     $(LINK32) @<<
   $(LINK32_FLAGS) $(LINK32_OBJS)
 <<
@@ -855,7 +856,7 @@ CPP=cl.exe
 # ADD BASE CPP /nologo /Gt0 /QMOb2000 /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_CONSOLE" /YX /c
 # ADD CPP /nologo /MT /Gt0 /QMOb2000 /W3 /GX /O2 /I "..\..\include" /D "NDEBUG" /D "_CONSOLE" /D "WIN32" /YX /c
 CPP_PROJ=/nologo /MT /Gt0 /QMOb2000 /W3 /GX /O2 /I "..\..\include" /D "NDEBUG"\
- /D "_CONSOLE" /D "WIN32" /Fp"$(INTDIR)/avstest.pch" /YX /Fo"$(INTDIR)/" /c 
+ /D "_CONSOLE" /D "WIN32" /Fp"$(INTDIR)/build.pch" /YX /Fo"$(INTDIR)/" /c 
 CPP_OBJS=.\avstest\MIPSRel/
 CPP_SBRS=.\.
 
@@ -879,7 +880,7 @@ CPP_SBRS=.\.
 
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /machine:MIPS
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /machine:MIPS
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /machine:MIPS /out:"bin\MIPSRel/avstest.exe"
 LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib\
  advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo\
  /subsystem:console /incremental:no /pdb:"$(OUTDIR)/avstest.pdb" /machine:MIPS\
@@ -900,7 +901,7 @@ LINK32_OBJS= \
 BSC32=bscmake.exe
 # ADD BASE BSC32 /nologo
 # ADD BSC32 /nologo
-BSC32_FLAGS=/nologo /o"$(OUTDIR)/avstest.bsc" 
+BSC32_FLAGS=/nologo /o"$(OUTDIR)/build.bsc" 
 BSC32_SBRS= \
 	
 
@@ -932,8 +933,8 @@ CPP=cl.exe
 # ADD BASE CPP /nologo /Gt0 /QMOb2000 /W3 /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /YX /c
 # ADD CPP /nologo /MTd /Gt0 /QMOb2000 /W3 /GX /Zi /Od /I "..\..\include" /D "_DEBUG" /D "_CONSOLE" /D "WIN32" /YX /c
 CPP_PROJ=/nologo /MTd /Gt0 /QMOb2000 /W3 /GX /Zi /Od /I "..\..\include" /D\
- "_DEBUG" /D "_CONSOLE" /D "WIN32" /Fp"$(INTDIR)/avstest.pch" /YX\
- /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c 
+ "_DEBUG" /D "_CONSOLE" /D "WIN32" /Fp"$(INTDIR)/build.pch" /YX /Fo"$(INTDIR)/"\
+ /Fd"$(INTDIR)/" /c 
 CPP_OBJS=.\avstest\MIPSDbg/
 CPP_SBRS=.\.
 
@@ -958,7 +959,7 @@ CPP_SBRS=.\.
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /debug /machine:MIPS
 # SUBTRACT BASE LINK32 /incremental:no
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /debug /machine:MIPS
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo /subsystem:console /debug /machine:MIPS /out:"bin\MIPSDbg/avstest.exe"
 # SUBTRACT LINK32 /incremental:no
 LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib\
  advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib /nologo\
@@ -980,7 +981,7 @@ LINK32_OBJS= \
 BSC32=bscmake.exe
 # ADD BASE BSC32 /nologo
 # ADD BSC32 /nologo
-BSC32_FLAGS=/nologo /o"$(OUTDIR)/avstest.bsc" 
+BSC32_FLAGS=/nologo /o"$(OUTDIR)/build.bsc" 
 BSC32_SBRS= \
 	
 
