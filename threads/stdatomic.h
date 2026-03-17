@@ -63,6 +63,7 @@ extern void _cpu_pause(void);
 
 #elif defined(_MSC_VER)
 
+#if defined(_M_IX86)
 static __inline void _cpu_pause(void)
 {
     __asm {
@@ -70,8 +71,14 @@ static __inline void _cpu_pause(void)
         _emit 0x90
     }
 }
+#else
+
+static __inline void _cpu_pause(void)
+{ }
 
 #endif
+#endif
+
 #if defined(__i386__)
 
 #if defined(__WATCOMC__)
@@ -388,9 +395,112 @@ extern signed char __locked_compare_exchange_impl(volatile atomic_int *obj, int 
 #error Define 16-bit atomics for MSVC
 #endif
 
-#endif // __i86__
+#elif defined(_MSC_VER) && defined(_M_MRX000) && _M_MRX000 >= 4000
 
-#if _M_IX86 < 400
+#pragma warning( disable : 4035 )
+
+static __inline int __cdecl __locked_exchange_impl(volatile atomic_int *obj, const int value)
+{
+	__asm(
+		"1: move %t1, %1;"
+		"ll %v0, 0(%0);"
+		"sc %t1, 0(%0);"
+		"beq %t1, 0, 1b", obj, value);
+}
+
+static __inline int __cdecl __locked_load_impl(volatile atomic_int *obj)
+{
+	__asm(
+		"sync;"
+		"lw %v0, 0(%0);"
+		"sync"
+		, obj);
+}
+
+static __inline void __cdecl __locked_store_impl(volatile atomic_int *obj, const int value)
+{
+	__asm(
+		"sync;"
+		"sw %1, 0(%0);"
+		"sync"
+		, obj, value);
+}
+
+static __inline int __cdecl __locked_add_impl(volatile atomic_int *obj, const int value)
+{
+	__asm(
+		"1: ll %t0, 0(%0);"
+		"addu %t1, %t0, %1;"
+		"move %v0, %t1;"
+		"sc %t1, 0(%0);"
+		"beq %t1, 0, 1b", obj, value);
+}
+
+static __inline int __cdecl __locked_fetch_add_impl(volatile atomic_int *obj, const int value)
+{
+	__asm(
+		"1: ll %v0, 0(%0);"
+		"addu %t1, %v0, %1;"
+		"sc %t1, 0(%0);"
+		"beq %t1, 0, 1b", obj, value);
+}
+
+static __inline int __cdecl __locked_inc_impl(volatile atomic_int *obj)
+{
+	__asm(
+		"1: ll %t0, 0(%0);"
+		"addiu %t1, %t0, 1;"
+		"move %v0, %t1;"
+		"sc %t1, 0(%0);"
+		"beq %t1, 0, 1b", obj);
+}
+
+static __inline int __cdecl __locked_dec_impl(volatile atomic_int *obj)
+{
+	__asm(
+		"1: ll %t0, 0(%0);"
+		"addiu %t1, %t0, -1;"
+		"move %v0, %t1;"
+		"sc %t1, 0(%0);"
+		"beq %t1, 0, 1b", obj);
+}
+
+static __inline int __cdecl __locked_compare_exchange_strong_impl(volatile atomic_int *obj, int *expected, const int desired)
+{
+	__asm(
+		"lw %t2, 0(%1);"			//load expected
+		"move %v0, %zero;"			//assume fail
+		"1: move %t1, %2;"
+		"ll %t0, 0(%0);"
+		"bne %t0, %t2, 2f;"
+		"sc %t1, 0(%0);"
+		"beq %t1, 0, 1b;"			//can't fail spuriously
+		"li %v0, 1;"
+		"j 3f;"
+		"2: sw %t0, 0(%1);"
+		"3: ", obj, expected, desired);
+}
+
+static __inline int __cdecl __locked_compare_exchange_weak_impl(volatile atomic_int *obj, int *expected, const int desired)
+{
+	__asm(
+		"lw %t2, 0(%1);"			//load expected
+		"move %v0, %zero;"			//assume fail
+		"ll %t0, 0(%0);"
+		"bne %t0, %t2, 1f;"
+		"sc %2, 0(%0);"
+		"beq %2, 0, 1f;"			//can fail spuriously
+		"li %v0, 1;"
+		"j 2f;"
+		"1: sw %t0, 0(%1);"
+		"2: ", obj, expected, desired);
+}
+
+#pragma warning( default : 4035 )
+
+#endif // _M_MRX000
+
+#if defined(_M_IX86) && _M_IX86 < 400
 
 int __cdecl
 __atomic_fetch_add_impl(volatile atomic_int *obj, const int value);
@@ -458,15 +568,23 @@ __atomic_bit_test_and_clear(volatile atomic_int *obj, unsigned num);
 #define atomic_exchange __locked_exchange_impl
 #define atomic_exchange_explicit(obj,desired,order) __locked_exchange_impl((obj), (desired))
 
+#if defined(_M_IX86)
+
 #define atomic_compare_exchange_strong __locked_compare_exchange_impl
 #define atomic_compare_exchange_weak __locked_compare_exchange_impl
+#define _atomic_bit_test_and_set __locked_bit_test_and_set
+#define _atomic_bit_test_and_clear __locked_bit_test_and_clear
+
+#elif defined(_M_MRX000) && _M_MRX000 >= 4000
+
+#define atomic_compare_exchange_strong __locked_compare_exchange_strong_impl
+#define atomic_compare_exchange_weak __locked_compare_exchange_weak_impl
+
+#endif
 
 #define _atomic_add __locked_add_impl
 #define _atomic_inc __locked_inc_impl
 #define _atomic_dec __locked_dec_impl
-
-#define _atomic_bit_test_and_set __locked_bit_test_and_set
-#define _atomic_bit_test_and_clear __locked_bit_test_and_clear
 
 #endif
 
@@ -479,7 +597,7 @@ __atomic_bit_test_and_clear(volatile atomic_int *obj, unsigned num);
 #define _locked_exchange __locked_exchange_impl
 #define _locked_exchange_explicit(obj,desired,order) __locked_exchange_impl((obj), (desired))
 
-#if _M_IX86 >= 300
+#if (defined(_M_IX86) && _M_IX86 >= 300) || (defined(_M_MRX000) && _M_MRX000 >= 4000)
 
 #define _locked_add __locked_add_impl
 #define _locked_inc __locked_inc_impl
@@ -489,13 +607,22 @@ __atomic_bit_test_and_clear(volatile atomic_int *obj, unsigned num);
 
 #endif
 
-#if _M_IX86 >= 400
+#if (defined(_M_IX86) && _M_IX86 >= 400) || (defined(_M_MRX000) && _M_MRX000 >= 4000)
 
 #define _locked_fetch_add __locked_fetch_add_impl
 #define _locked_fetch_add_explicit(obj,value,order) __locked_fetch_add_impl((obj), (value))
 
+#if (defined(_M_IX86) && _M_IX86 >= 400)
+
 #define _locked_compare_exchange_strong __locked_compare_exchange_impl
 #define _locked_compare_exchange_weak __locked_compare_exchange_impl
+
+#elif defined(_M_MRX000) && _M_MRX000 >= 4000
+
+#define _locked_compare_exchange_strong __locked_compare_exchange_strong_impl
+#define _locked_compare_exchange_weak __locked_compare_exchange_weak_impl
+
+#endif
 
 #endif
 #endif
