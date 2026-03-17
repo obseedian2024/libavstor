@@ -63,6 +63,56 @@
 #pragma warning(disable:4996) // deprecated
 #endif 
 
+const char *AVS_TARGET_ARCH =
+#if defined(__amd64) || defined(__amd64__) || defined(__x86_64) || defined(__x86_64__)
+"x86_64"
+#elif defined(__I86__) || defined(M_I86) || defined(_M_I86)
+"i8086"
+#elif defined(i386) || defined(__i386) || defined(_M_IX86)
+"i386"
+#elif defined(__alpha__) || defined(__alpha) || defined(__M_ALPHA) || defined(_M_ALPHA)
+"alpha"
+#elif defined(_M_MRX000) || defined(__mips__) || defined(__mips) || defined(__MIPS__) || defined(mips)
+"mips"
+#if (defined(__POINTER_WIDTH__) && __POINTER_WIDTH__ == 64)
+"64"
+#endif
+#if (defined(__LITTLE_ENDIAN__) && __LITTLE_ENDIAN__ == 1) || defined(_WIN32)
+"el"
+#endif
+#elif defined(__aarch64__)
+"aarch64"
+#elif defined(__arm__) || defined(_M_ARM) || defined(__arm)
+"arm"
+#elif defined(__m68k__)
+"m68k"
+#elif defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__) || defined(_ARCH_PPC64) || defined(_ARCH_PPC64)
+"powerpc64"
+#if (defined(__LITTLE_ENDIAN__) && __LITTLE_ENDIAN__ == 1) || defined(_WIN32)
+"le"
+#endif
+#elif defined(__powerpc) || defined(__powerpc__) || defined(__POWERPC__) || defined(__ppc__) \
+    || defined(__PPC__) || defined(_M_PPC) || defined(__M_PPC) || defined(__ppc)
+"powerpc"
+#else
+"unknown"
+#endif
+"-"
+#if defined(_WIN32)
+"win32"
+#elif defined(__OS2__)
+"os2"
+#elif defined(__DOS__) || defined(_DOS) || defined(MSDOS)
+"msdos"
+#elif defined(__FreeBSD__)
+"freebsd"
+#elif defined(__linux__)
+"linux"
+#else
+"unknown"
+#endif
+;
+
 char* RED = "\033[1;31m";
 char* GRN = "\033[1;32m";
 char* YEL = "\033[1;33m";
@@ -232,7 +282,8 @@ int main(void)
     printf("libavstor Test Suite\n"
            "BSD 3-Clause License\n"
            "Copyright (c) 2025 Tamas Fejerpataky\n"
-           "See project at https://github.com/obseedian2024/libavstor\n\n");
+           "See project at https://github.com/obseedian2024/libavstor\n");
+    printf("Target: %s\n\n", AVS_TARGET_ARCH);
 
     is_term = init_term();
 
