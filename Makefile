@@ -18,17 +18,17 @@ AVSTEST_OBJS = $(TEST_OBJ_DIR)/avstest.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)
 
 AR = ar
 CFLAGS += -I./include -Wall -Wextra -Werror -pedantic
+HAS_NO_STDTHREADS = $(shell $(CC) -lstdthreads /dev/null 2>/dev/stdout | grep -c -E "cannot find|unable to find")
 
 ifeq ($(THREAD_SAFE), 1)
 	CFLAGS += -DAVSTOR_CONFIG_THREAD_SAFE=1
+	ifeq ($(HAS_NO_STDTHREADS), 0)
+		LDFLAGS += -lstdthreads
+	endif
 endif
 
 ifeq ($(FILE_64BIT), 1)
 	CFLAGS += -DAVSTOR_CONFIG_FILE_64BIT=1
-endif
-
-ifeq ($(FORCE_C11_THREADS), 1)
-	CFLAGS += -DAVSTOR_CONFIG_FORCE_C11_THREADS=1
 endif
 
 ifeq ($(RELEASE), 1)
@@ -40,10 +40,10 @@ endif
 all: $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(LIB_FILE) $(AVSCRDB_FILE) $(AVSTEST_FILE)
 
 $(AVSCRDB_FILE): $(LIB_OBJS) $(AVSCRDB_OBJS)
-	$(CC) $(AVSCRDB_OBJS) $(LIB_FILE) -o $@
+	$(CC) $(AVSCRDB_OBJS) $(LIB_FILE) $(LDFLAGS) -o $@
 
 $(AVSTEST_FILE): $(LIB_OBJS) $(AVSTEST_OBJS)
-	$(CC) $(AVSTEST_OBJS) $(LIB_FILE) -o $@
+	$(CC) $(AVSTEST_OBJS) $(LIB_FILE) $(LDFLAGS) -o $@
 
 $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)
