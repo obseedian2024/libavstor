@@ -2356,7 +2356,7 @@ static AvNode* create_node(avstor *db, AvPage *preferred_page, const avstor_key 
     }
     node = alloc_node(db, preferred_page, node_size, page_pool);
 
-    node->hdr = (node->hdr & ~NODE_TYPEMASK) | (uint16_t)((type) << 2);
+    node->hdr = (uint16_t)((node->hdr & ~NODE_TYPEMASK) | (type << 2));
     node->left = NODEREF_NULL;
     node->right = NODEREF_NULL;
     node->szname = (uint8_t)(data_ofs - SIZE_NODE_HDR);
