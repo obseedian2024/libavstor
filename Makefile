@@ -16,10 +16,8 @@ AVSTEST_FILE = $(BIN_DIR)/avstest
 AVSTEST_OBJS = $(TEST_OBJ_DIR)/avstest.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)/timer.o \
                $(TEST_OBJ_DIR)/tst*.o
 
-CC = gcc
 AR = ar
-
-CFLAGS = -I./include -Wall -Wextra -Werror -pedantic
+CFLAGS += -I./include -Wall -Wextra -Werror -pedantic
 
 ifeq ($(THREAD_SAFE), 1)
 	CFLAGS += -DAVSTOR_CONFIG_THREAD_SAFE=1
