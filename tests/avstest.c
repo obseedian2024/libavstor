@@ -54,8 +54,6 @@
 #include <conio.h>
 #endif
 
-#include <avstor.h>
-
 #include "avstest.h"
 #include "timer.h"
 
@@ -63,11 +61,15 @@
 #pragma warning(disable:4996) // deprecated
 #endif 
 
-const char *AVS_TARGET_ARCH =
+static const char *AVS_TARGET_ARCH =
 #if defined(__amd64) || defined(__amd64__) || defined(__x86_64) || defined(__x86_64__)
 "x86_64"
 #elif defined(__I86__) || defined(M_I86) || defined(_M_I86)
+#if defined(__OS2__)
+"i286"
+#else
 "i8086"
+#endif
 #elif defined(i386) || defined(__i386) || defined(_M_IX86)
 "i386"
 #elif defined(__alpha__) || defined(__alpha) || defined(__M_ALPHA) || defined(_M_ALPHA)

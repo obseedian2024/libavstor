@@ -34,9 +34,6 @@
 #ifndef AVSTEST_H
 #define AVSTEST_H
 
-#include <stdint.h>
-#include <avstor.h>
-
 #define AVSTEST_MUST_PASS 1 
 
 typedef int (*avstest_fn)(void *param);
