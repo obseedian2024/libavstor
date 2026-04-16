@@ -1486,13 +1486,13 @@ static int write_page(avstor *db, AvPage* page)
     return AVSTOR_OK;
 }
 
-static __inline unsigned cache_get_row(PageCache *cache, avstor_off page_ofs)
+static __inline unsigned cache_get_row(const PageCache *cache, const avstor_off page_ofs)
 {
     // multiplier from L'Ecuyer 1999
     return (unsigned)((((page_ofs / PAGE_SIZE) * 1597334677u) >> 3) & cache->l2_mask);
 }
 
-static __inline CacheItem* cache_lookup_scan_line(CacheRow *line, avstor_off page_ofs, CacheItem* *out_item)
+static __inline CacheItem* cache_lookup_scan_line(const CacheRow *line, const avstor_off page_ofs, CacheItem* *out_item)
 {
     unsigned cnt;
     CacheItem *item, *avail_item = NULL;
@@ -1502,11 +1502,11 @@ static __inline CacheItem* cache_lookup_scan_line(CacheRow *line, avstor_off pag
             *out_item = item;
             return NULL;
         }
-        else if (item->offset == 0) {
-            avail_item = item;
-        }
         else if (item->offset == page_ofs) {
             return item;
+        }
+        else if (item->offset == 0) {
+            avail_item = item;
         }
     }
     *out_item = avail_item;
