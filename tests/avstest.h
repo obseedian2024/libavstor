@@ -34,7 +34,8 @@
 #ifndef AVSTEST_H
 #define AVSTEST_H
 
-#define AVSTEST_MUST_PASS 1 
+#define AVSTEST_MUST_PASS   1 
+#define AVSTEST_SKIP        2
 
 typedef int (*avstest_fn)(void *param);
 
