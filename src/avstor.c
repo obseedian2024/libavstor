@@ -30,19 +30,29 @@
 * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+
+#if defined(__linux__)
+#define __USE_FILE_OFFSET64 1
+#endif
+
 #include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
+
+#if !defined(_WIN32)
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#endif
 
 #include <avstor.h>
 
 #define PAGE_SIZE               4096
+#define NODES_PER_PAGE          256
+
 #define L2_ASSOC                8
 
 #if defined(__I86__) || defined(M_I86) || defined(_M_I86)
@@ -210,11 +220,14 @@
 
 #define PAGES_PER_BLOCK         (DEFAULT_BLOCK_SIZE * 1024 / PAGE_SIZE)
 
-#if !defined(AVSTOR_CONFIG_FILE_64BIT) || defined(__DOS__)
-#define MAX_FILE_PAGES          (0x80000000U / (unsigned)PAGE_SIZE - 1U)
+#if defined(__DOS__) || defined(__OS2__)
+#define MAX_FILE_PAGES          (0x80000000u / PAGE_SIZE - 1u)
 #elif defined(AVSTOR_CONFIG_FILE_64BIT)
-#define MAX_FILE_PAGES          0x0FFFFFFFFU
+#define MAX_FILE_PAGES          0x0FFFFFFFFu
+#else
+#define MAX_FILE_PAGES          (0x80000000u / (PAGE_SIZE / NODES_PER_PAGE) - 1u)
 #endif
+
 #define INVALID_INDEX           0
 #define PAGE_HDR                0x00u
 #define PAGE_KEYS               0x01u
@@ -317,16 +330,16 @@ typedef struct rwl_t {
 // struct rather than using int64_t directly to retain 4 byte alignment
 typedef struct NodeRef {
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
-    uint32_t            offset[2];
+    uint32_t            value[2];
 #else
-    avstor_off          offset;
+    uint32_t            value;
 #endif
 } NodeRef;
 
 typedef struct AvPage AvPage;
 typedef struct {
     AvPage*             page;
-    avstor_off          offset;
+    avstor_off          page_num;
     uint32_t            load_time;
 } CacheItem;
 
@@ -347,8 +360,8 @@ struct AvPage {
 #else
     int32_t             lock_count;
 #endif
-    // offset of page in the file
-    avstor_off          page_offset;
+    // page number of the page
+    avstor_off          page_num;
 #if !defined(AVSTOR_CONFIG_FILE_64BIT)
     int32_t             pad_offset;
 #endif
@@ -968,12 +981,12 @@ static __inline NodeRef ofs_to_nref(const avstor_off ofs)
 static __inline NodeRef ofs_to_nref(const avstor_off ofs)
 {
     NodeRef result;
-    result.offset = ofs;
+    result.value = ofs;
     return result;
 }
 
-#define nref_to_ofs(ref) (ref).offset
-#define is_nref_empty(n) ((n).offset == 0)
+#define nref_to_ofs(ref) (ref).value
+#define is_nref_empty(n) ((n).value == 0)
 #endif
 
 //static const char               FILE_ID[4] = "AVST";
@@ -1105,30 +1118,33 @@ static int io_commit(int fid)
     return FlushFileBuffers((HANDLE)(intptr_t)fid);
 }
 
-static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
+static int io_read(avstor *db, void *buf, avstor_off page_num, unsigned count)
 {
     OVERLAPPED ovlp;
     DWORD bytes;
-    ZeroMemory(&ovlp, sizeof(ovlp));
+    const uint64_t pos = (uint64_t)page_num * PAGE_SIZE;
+
+    // We can do positioned updates by using the overlapped structure
+    ZeroMemory(&ovlp, sizeof(ovlp));    
     ovlp.Offset = (DWORD)pos;
-#if defined(AVSTOR_CONFIG_FILE_64BIT)
     ovlp.OffsetHigh = (DWORD)(pos >> 32);
-#endif
+    
     if (!ReadFile((HANDLE)(intptr_t)db->file, buf, count, &bytes, &ovlp)) {
         return GetLastError() == ERROR_HANDLE_EOF ? 0 : -1;
     }
     return (int)bytes;
 }
 
-static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
+static int io_write(avstor *db, const void *buf, avstor_off page_num, unsigned count)
 {
     OVERLAPPED ovlp;
     DWORD bytes;
+    const uint64_t pos = (uint64_t)page_num * PAGE_SIZE;
+
     ZeroMemory(&ovlp, sizeof(ovlp));
     ovlp.Offset = (DWORD)pos;
-#if defined(AVSTOR_CONFIG_FILE_64BIT)
     ovlp.OffsetHigh = (DWORD)(pos >> 32);
-#endif
+
     if (!WriteFile((HANDLE)(intptr_t)db->file, buf, count, &bytes, &ovlp)) {
         return -1;
     }
@@ -1168,42 +1184,33 @@ static int io_commit(int fid)
 
 #if defined(__unix__)
 
-static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
+static int io_read(avstor *db, void *buf, avstor_off page_num, unsigned count)
 {
-    return pread(db->file, buf, count, (off_t)pos);
+    return pread(db->file, buf, count, (off_t)((int64_t)page_num * PAGE_SIZE));
 }
 
-static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
+static int io_write(avstor *db, const void *buf, avstor_off page_num, unsigned count)
 {
-    return pwrite(db->file, buf, count, (off_t)pos);
+    return pwrite(db->file, buf, count, (off_t)((int64_t)page_num * PAGE_SIZE));
 }
 
 #else
-static int io_seek(int fid, avstor_off pos)
+static int io_seek(int fid, avstor_off page_num)
 {
-#if !defined(AVSTOR_CONFIG_FILE_64BIT) || defined(__DOS__)
-    return lseek(fid, (long)pos, SEEK_SET) >= 0;
-#elif defined(AVSTOR_CONFIG_FILE_64BIT)
-#if defined(__FreeBSD__)
-    // in recent versions of FreeBSD, off_t is always 64 bits, even for 32-bit executables
-    return lseek(fid, (off_t)pos, SEEK_SET) >= 0;
-#elif defined(_WIN32) || defined(__WATCOMC__)
-    return _lseeki64(fid, (int64_t)pos, SEEK_SET) >= 0;
-#elif defined(__linux__)
-    return lseek64(fid, (off64_t)pos, SEEK_SET) >= 0;
-#else
-#error "64-bit io_seek not implemented for current platform."
-#endif
+#if defined(__DOS__)
+    return lseek(fid, (long)page_num * PAGE_SIZE, SEEK_SET) >= 0;
+#elif defined(__WATCOMC__)
+    return _lseeki64(fid, (int64_t)page_num * PAGE_SIZE, SEEK_SET) >= 0;
 #endif
 }
 
-static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
+static int io_read(avstor *db, void *buf, avstor_off page_num, unsigned count)
 {
     int result;
 #if defined(IO_REQUIRES_SYNC)
     avmtx_lock(&db->io_mtx);
 #endif
-    if (!io_seek(db->file, pos)) {
+    if (!io_seek(db->file, page_num)) {
         result = -1;
     }
     else {
@@ -1215,13 +1222,13 @@ static int io_read(avstor *db, void *buf, avstor_off pos, unsigned count)
     return result;
 }
 
-static int io_write(avstor *db, const void *buf, avstor_off pos, unsigned count)
+static int io_write(avstor *db, const void *buf, avstor_off page_num, unsigned count)
 {
     int result;
 #if defined(IO_REQUIRES_SYNC)
     avmtx_lock(&db->io_mtx);
 #endif
-    if (!io_seek(db->file, pos)) {
+    if (!io_seek(db->file, page_num)) {
         result = -1;
     }
     else {
@@ -1442,10 +1449,10 @@ err_rwl_init:
     return 0;
 }
 
-static int read_page(avstor *db, avstor_off page_offset, AvPage *page)
+static int read_page(avstor *db, avstor_off page_num, AvPage *page)
 {
     uint32_t checksum;
-    int numread = io_read(db, page, page_offset, PAGE_SIZE);
+    int numread = io_read(db, page, page_num, PAGE_SIZE);
 
     if (!numread) {
         RETURN(AVSTOR_IOERR, "page offset beyond EOF.");
@@ -1477,7 +1484,7 @@ static int write_page(avstor *db, AvPage* page)
         int res;
         set_page_clean(page);
         update_page_checksum(page);
-        res = io_write(db, page, page->page_offset, PAGE_SIZE);
+        res = io_write(db, page, page->page_num, PAGE_SIZE);
         if (res < PAGE_SIZE) {
             set_page_dirty(page);
             RETURN(AVSTOR_IOERR, "io_write() failed.");
@@ -1486,13 +1493,13 @@ static int write_page(avstor *db, AvPage* page)
     return AVSTOR_OK;
 }
 
-static __inline unsigned cache_get_row(const PageCache *cache, const avstor_off page_ofs)
+static __inline unsigned cache_get_row(const PageCache *cache, const avstor_off page_num)
 {
     // multiplier from L'Ecuyer 1999
-    return (unsigned)((((page_ofs / PAGE_SIZE) * 1597334677u) >> 3) & cache->l2_mask);
+    return (unsigned)(((page_num * 1597334677u) >> 3) & cache->l2_mask);
 }
 
-static __inline CacheItem* cache_lookup_scan_line(const CacheRow *line, const avstor_off page_ofs, CacheItem* *out_item)
+static __inline CacheItem* cache_lookup_scan_line(const CacheRow *line, const avstor_off page_num, CacheItem* *out_item)
 {
     unsigned cnt;
     CacheItem *item, *avail_item = NULL;
@@ -1502,10 +1509,10 @@ static __inline CacheItem* cache_lookup_scan_line(const CacheRow *line, const av
             *out_item = item;
             return NULL;
         }
-        else if (item->offset == page_ofs) {
+        else if (item->page_num == page_num) {
             return item;
         }
-        else if (item->offset == 0) {
+        else if (item->page_num == 0) {
             avail_item = item;
         }
     }
@@ -1534,7 +1541,7 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
         if (!page) {
             break;
         }
-        else if (item->offset != 0 && item->load_time < min_age
+        else if (item->page_num != 0 && item->load_time < min_age
                  && atomic_load_int_acquire(&page->lock_count) == 0) {
             min_age = item->load_time;
             poldest = item;
@@ -1552,7 +1559,7 @@ static int cache_evict(avstor *db, CacheRow *line, CacheItem* *out_item)
                 return evict_must_flush;
             }
         }
-        poldest->offset = 0;
+        poldest->page_num = 0;
         *out_item = poldest;
         return evict_success;
     }
@@ -1570,7 +1577,7 @@ static CacheItem* cache_line_realloc(avstor *db, CacheRow *line)
         CacheItem* item;
         for (col = old_capacity; col < line->capacity; ++col) {
             new_items[col].load_time = 0;
-            new_items[col].offset = 0;
+            new_items[col].page_num = 0;
             new_items[col].page = NULL;
         }
         line->items = new_items;
@@ -1582,22 +1589,22 @@ static CacheItem* cache_line_realloc(avstor *db, CacheRow *line)
     return NULL;
 }
 
-static AvPage* cache_lookup(avstor *db, avstor_off page_ofs, int is_existing)
+static AvPage* cache_lookup(avstor *db, avstor_off page_num, int is_existing)
 {
     PageCache *cache = &db->cache;
     CacheItem *item;
     AvPage *page;
     CacheRow *row;
 
-    unsigned row_num = cache_get_row(cache, page_ofs);
+    unsigned row_num = cache_get_row(cache, page_num);
     CacheItem *first_empty_item;
     int evict_result;
-    assert(page_ofs != 0);
+    assert(page_num != 0);
     row = &cache->rows[row_num];
 
     do {
         rwl_lock_shared(&row->lock);
-        if ((item = cache_lookup_scan_line(row, page_ofs, &first_empty_item))) {
+        if ((item = cache_lookup_scan_line(row, page_num, &first_empty_item))) {
             // page was found in cache
 
             // This is OK because nobody else has exclusive lock on row, i.e. not trying to evict
@@ -1644,7 +1651,7 @@ skip_evict:
     if (is_existing) {
         int result;
         // If looking for existing page, we can load it into the empty (or evicted) page
-        if (AVSTOR_OK != (result = read_page(db, page_ofs, page))) {
+        if (AVSTOR_OK != (result = read_page(db, page_num, page))) {
             rwl_release(&row->lock);
             THROW(result, "read_page() failed while reading page into cache");
         }
@@ -1653,10 +1660,10 @@ skip_evict:
     else {
         // Clear the evicted or newly allocated page
         memset(page, 0, PAGE_SIZE);
-        page->page_offset = page_ofs;
+        page->page_num = page_num;
         item->load_time = 0;
     }
-    item->offset = page_ofs;
+    item->page_num = page_num;
     atomic_store_int_release(&page->lock_count, 1);
     rwl_release(&row->lock);
     return page;
@@ -1708,7 +1715,7 @@ static __inline AvPage* get_ptr_page(const void *ptr)
 
 static __inline avstor_off get_ofs(const AvNode *node)
 {
-    return get_ptr_page(node)->page_offset + offsetof(AvPage, nodes[node->index]);
+    return get_ptr_page(node)->page_num * NODES_PER_PAGE + node->index;
 }
 
 static __inline NodeRef get_nref(const AvNode *node)
@@ -1733,9 +1740,11 @@ static __inline void assign_nref(NodeRef src, NodeRef *dest)
     set_ptr_dirty(dest);
 }
 
-static __inline AvNode* get_node(AvPage *page, unsigned ioff)
+static __inline AvNode* get_node(AvPage *page, unsigned index)
 {
-    uint16_t node_offset = *(uint16_t*)PTR(page, ioff);
+    uint16_t node_offset; 
+    assert(index < NODES_PER_PAGE && index < page->index_count);
+    node_offset = page->nodes[index];
     if (node_offset == INVALID_INDEX) {
         THROW(AVSTOR_INVOPER, "Node has been deleted.");
     }
@@ -1755,7 +1764,7 @@ static int is_node_addr_valid(const avstor *db, const AvNode* node)
     /* if (memcmp(&page->id, &PAGE_ID, sizeof(PAGE_ID)) != 0) {
          goto error_node;
      }*/
-    if (get_node(page, offsetof(AvPage, nodes[node->index])) != node) {
+    if (get_node(page, node->index) != node) {
         goto error_node;
     }
     return 1;
@@ -1779,35 +1788,35 @@ static unsigned get_page_free_space(AvPage* page)
     return (top > bottom) ? top - bottom : 0;
 }
 
-static __inline AvPage* get_page(avstor *db, avstor_off page_offset)
+static __inline AvPage* get_page(avstor *db, avstor_off page_num)
 {
-    return cache_lookup(db, page_offset, 1);
+    return cache_lookup(db, page_num, 1);
 }
 
 static AvNode* lock_node(avstor *db, const avstor_off noderef)
 {
     assert(noderef != 0);
-    return get_node(get_page(db, noderef & OFFSET_MASK), (unsigned)(noderef & ~OFFSET_MASK));
+    return get_node(get_page(db, noderef / NODES_PER_PAGE), (unsigned)noderef & (NODES_PER_PAGE - 1u));
 }
 
 static AvNode* lock_node_ex(avstor *db, const NodeRef *noderef)
 {
     AvPage *node_page;
-    avstor_off pageofs, node_ofs;
+    avstor_off page_num, node_ofs;
     assert(noderef && !is_nref_empty(*noderef));
     node_page = get_ptr_page(noderef);
     assert(atomic_load_int_acquire(&node_page->lock_count) > 0);  // page containging noderef should already be locked
     node_ofs = nref_to_ofs(*noderef);
-    pageofs = node_ofs & OFFSET_MASK;
-    if (pageofs != node_page->page_offset) {
+    page_num = node_ofs / NODES_PER_PAGE;
+    if (page_num != node_page->page_num) {
         /* This assumes page of noderef is already locked, otherwise it could get swapped out! */
-        node_page = get_page(db, pageofs);
+        node_page = get_page(db, page_num);
     }
     else {
         // This is ok because page is already locked, we're only increasing the lock count
         lock_page(node_page);
     }
-    return get_node(node_page, (unsigned)(node_ofs & ~OFFSET_MASK));
+    return get_node(node_page, (unsigned)node_ofs & (NODES_PER_PAGE - 1u));
 }
 
 static __inline void unlock_ptr(const void *ptr)
@@ -1819,22 +1828,22 @@ static __inline void unlock_ptr(const void *ptr)
 static AvNode* lock_unlock_node(avstor *db, const avstor_off ofs, AvNode *node_to_unlock)
 {
     AvPage *node_page;
-    avstor_off pageofs;
+    avstor_off page_num;
     if (!node_to_unlock) {
         return lock_node(db, ofs);
     }
     node_page = get_ptr_page(node_to_unlock);
     assert(atomic_load_int_acquire(&node_page->lock_count) > 0);  // page containging noderef should already be locked
-    pageofs = ofs & OFFSET_MASK;
-    if (pageofs != node_page->page_offset) {
+    page_num = ofs / NODES_PER_PAGE;
+    if (page_num != node_page->page_num) {
         unlock_ptr(node_to_unlock);
-        node_page = get_page(db, pageofs);
+        node_page = get_page(db, page_num);
     }
     else {
         // This is ok because page is already locked, we're only increasing the lock count
         //lock_page(node_page);
     }
-    return get_node(node_page, (unsigned)(ofs & ~OFFSET_MASK));
+    return get_node(node_page, (unsigned)ofs & (NODES_PER_PAGE - 1u));
 }
 
 static __inline void unlock_ptr_checked(const void *ptr)
@@ -1850,7 +1859,7 @@ static __inline void lock_ref(const NodeRef *noderef)
     // Outside shared cache row lock, we can only increment lock count of currently locked page.
     // Otherwise, a page currently being evicted might end up getting re-locked, which would be bad.
     // Header is exception, it is never in the cache
-    assert(atomic_load_int_acquire(&page->lock_count) > 0 || page->page_offset == 0);
+    assert(atomic_load_int_acquire(&page->lock_count) > 0 || page->page_num == 0);
     lock_page(page);
 }
 
@@ -2189,13 +2198,11 @@ static AvPage* create_page(avstor *db, unsigned type)
 {
     AvPage *hdr = db->cache.header;
     AvPage *page;
-    avstor_off page_offset;
 
     if (hdr->pagecount == MAX_FILE_PAGES) {
         THROW(AVSTOR_INVOPER, "Maximum allowable file size exceeded");
     }
-    page_offset = (avstor_off)hdr->pagecount * (unsigned)PAGE_SIZE;
-    page = cache_lookup(db, page_offset, 0);
+    page = cache_lookup(db, hdr->pagecount, 0);
     //memcpy(&page->id, &PAGE_ID, sizeof(PAGE_ID));
     page->type = (uint8_t)type;
     page->top = PAGE_SIZE;
@@ -2210,9 +2217,9 @@ static AvPage* create_page(avstor *db, unsigned type)
 static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, unsigned page_pool)
 {
     AvPage *page = NULL;
-    uint16_t *index;
+    uint16_t *slot;
     AvNode *node;
-    unsigned index_ofs;
+    unsigned index;
     uint16_t nextfree;
 
     if (preferred_page && size <= get_page_free_space(preferred_page)) {
@@ -2224,7 +2231,7 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
     else {
         uint32_t page_num = db->cache.header->page_pool[page_pool];
         if (page_num != 0) {
-            page = get_page(db, (avstor_off)page_num * PAGE_SIZE);
+            page = get_page(db, (avstor_off)page_num);
             if (size > get_page_free_space(page)) {
                 unlock_page(page);
                 page = NULL;
@@ -2238,31 +2245,31 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
             if (size > get_page_free_space(page)) {
                 THROW(AVSTOR_INTERNAL, MSG_NO_SPACE_IN_PAGE);
             }
-            db->cache.header->page_pool[page_pool] = (uint32_t)(page->page_offset / PAGE_SIZE);
+            db->cache.header->page_pool[page_pool] = (uint32_t)page->page_num;
         }
     }
 
     nextfree = page->index_freelist;
     //set_page_dirty(page);
     if (nextfree == INVALID_INDEX) {
-        index = &page->nodes[page->index_count];
+        slot = &page->nodes[page->index_count];
         page->index_count++;
     }
     else {
-        index = (uint16_t*)PTR(page, nextfree);
-        page->index_freelist = *index;
+        slot = (uint16_t*)PTR(page, nextfree);
+        page->index_freelist = *slot;
     }
     page->top -= size;
-    *index = page->top;
-    index_ofs = PTR_DIFF(page, index);
-    node = get_node(page, index_ofs);
+    *slot = page->top;
+    index = ((PTR_DIFF(page, slot) - offsetof(AvPage, nodes)) / sizeof(uint16_t));
+    node = get_node(page, index);
 
     // check if we have overwritten the node index array
     if ((void*)node < (void*)&page->nodes[page->index_count]) {
         THROW(AVSTOR_INTERNAL, MSG_PAGE_CORRUPTED);
     }
 
-    node->index = (uint8_t)((index_ofs - offsetof(AvPage, nodes)) / sizeof(uint16_t));
+    node->index = index;
     set_node_size(node, size);
     //lock_page(page);
     return node;
@@ -2544,11 +2551,11 @@ static void rollback(avstor *db)
         CacheRow *line = &cache->rows[row];
         for (col = 0; col < line->capacity; ++col) {
             AvPage *page = line->items[col].page;
-            if (page && page->page_offset != 0) {
+            if (page && page->page_num != 0) {
                 if (is_page_dirty(page)) {
                     // invalidate modified cache item
                     //page->page_offset = 0;
-                    line->items[col].offset = 0;
+                    line->items[col].page_num = 0;
                 }
                 atomic_store_int_release(&page->lock_count, 0);
             }
@@ -3291,7 +3298,7 @@ static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
     hdr = db->cache.header;
     memset(hdr, 0, PAGE_SIZE);
     //memcpy(&hdr->id, &FILE_ID, sizeof(FILE_ID));
-    hdr->page_offset = 0;
+    hdr->page_num = 0;
     hdr->type = PAGE_HDR;
     set_page_dirty(hdr);
     hdr->pagecount = 1;

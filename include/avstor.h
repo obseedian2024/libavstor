@@ -99,8 +99,10 @@ enum {
 
 typedef struct avstor   avstor;
 
-// Node references in the file are linear offsets from file start.
-// Define AVSTOR_CONFIG_FILE_64BIT to use 64-bit offsets and enable files larger than 2GB.
+// Offset format is the page number shifted left by 8 + node index. This
+// allows a maximum file size of 64GB with 32-bit offsets.
+// Define AVSTOR_CONFIG_FILE_64BIT to use 64-bit offsets and enable files 
+// larger than 64GB (currently limited to 16TB).
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
 typedef uint64_t        avstor_off;
 #else 
