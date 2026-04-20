@@ -556,21 +556,6 @@ static const char* MSG_BACKTRACE_OVERFLOW           = "Backtrace stack overflow"
 static const char* MSG_BACKTRACE_UNDERFLOW          = "Backtrace stack underflow";
 static const char* MSG_INVALID_ATTRIBUTE            = "Invalid attribute";
 
-static const char* err_codes[] =
-{
-    "AVSTOR_OK",
-    "AVSTOR_PARAM",
-    "AVSTOR_MISMATCH",
-    "AVSTOR_NOMEM",
-    "AVSTOR_NOTFOUND",
-    "AVSTOR_EXISTS",
-    "AVSTOR_IOERR",
-    "AVSTOR_CORRUPT",
-    "AVSTOR_INVOPER",
-    "AVSTOR_INTERNAL",
-    "AVSTOR_ABORT"
-};
-
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
 static const NodeRef    NODEREF_NULL = { { 0, 0 } };
 #else
@@ -635,9 +620,9 @@ static void throw_ex(int err, const char* msg, int line_no, const char* file, st
     while (cur_ex && cur_ex->state != EX_STATE_IN_TRY) {
         if (cur_ex->state == EX_STATE_IN_CATCH) {
             fprintf(stderr, "libavstor: Attempting to throw exception %s from catch handler at line %i in %s.\n"
-                    , err_codes[err], line_no, file);
+                    ,avstor_errtostr(err), line_no, file);
             fprintf(stderr, "--> Original exception %s at line %i in %s. Process aborted.\n"
-                    , err_codes[cur_ex->err], cur_ex->line_no, cur_ex->file);
+                    ,avstor_errtostr(cur_ex->err), cur_ex->line_no, cur_ex->file);
             exit(1);
         }
         else if (cur_ex->state == EX_STATE_IN_FINALLY) {
@@ -653,7 +638,7 @@ static void throw_ex(int err, const char* msg, int line_no, const char* file, st
             cur_ex->msg = msg;
             last_err_msg = msg;
 #if !defined(NDEBUG)
-            fprintf(stderr, "libavstor: Exception %s: %s\n", err_codes[err], msg);
+            fprintf(stderr, "libavstor: Exception %s: %s\n", avstor_errtostr(err), msg);
             fprintf(stderr, "  at line %i in %s\n", line_no, file);
 #endif
         }
@@ -666,7 +651,7 @@ static void throw_ex(int err, const char* msg, int line_no, const char* file, st
         longjmp(cur_ex->context, err);
     }
     else {
-        fprintf(stderr, "libavstor: Unhandled exception %s at line %i in %s. Process aborted.\n", err_codes[err]
+        fprintf(stderr, "libavstor: Unhandled exception %s at line %i in %s. Process aborted.\n", avstor_errtostr(err)
                 , line_no, file);
         exit(1);
     }
@@ -3847,9 +3832,27 @@ int AVCALL avstor_inorder_next(avstor_inorder *st, avstor_node *out_node)
     return result;
 }
 
-const char* AVCALL avstor_get_errstr(void)
+const char* AVCALL avstor_get_last_errmsg(void)
 {
     return last_err_msg;
+}
+
+const char *AVCALL avstor_errtostr(int err_code)
+{
+    switch (err_code) {
+    case AVSTOR_OK:         return "AVSTOR_OK";
+    case AVSTOR_PARAM:      return "AVSTOR_PARAM";
+    case AVSTOR_MISMATCH:   return "AVSTOR_MISMATCH";
+    case AVSTOR_NOMEM:      return "AVSTOR_NOMEM";
+    case AVSTOR_NOTFOUND:   return "AVSTOR_NOTFOUND";
+    case AVSTOR_EXISTS:     return "AVSTOR_EXISTS";
+    case AVSTOR_IOERR:      return "AVSTOR_IOERR";
+    case AVSTOR_CORRUPT:    return "AVSTOR_CORRUPT";
+    case AVSTOR_INVOPER:    return "AVSTOR_INVOPER";
+    case AVSTOR_INTERNAL:   return "AVSTOR_INTERNAL";
+    case AVSTOR_ABORT:      return "AVSTOR_ABORT";
+    default:                return "UNKNOWN";
+    }
 }
 
 #if defined(_WINDLL)

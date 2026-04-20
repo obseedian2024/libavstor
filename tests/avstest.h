@@ -69,7 +69,10 @@ extern char* YEL;
 extern char* WHT;
 extern char* CRESET;
 
-void avstest_print_err(const char *msg);
+#define avstest_print_err(fn_name, err_code) \
+    printf("%sERROR: %s failed with %s: %s%s\n", \
+        YEL, (fn_name), avstor_errtostr(err_code), avstor_get_last_errmsg(), CRESET) 
+
 int avstest_run_test(const AvsTest *test, double *duration);
 
 #endif

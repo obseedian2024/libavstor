@@ -267,11 +267,6 @@ static int init_term(void)
     return 0;
 }
 
-void avstest_print_err(const char *msg)
-{
-    printf("%sERROR: %s%s\n", YEL, msg, CRESET);
-}
-
 int is_term;
 
 IMPORT_TESTS(DFS);

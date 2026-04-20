@@ -201,7 +201,9 @@ int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, c
 
 int AVCALL avstor_inorder_next(avstor_inorder *st, avstor_node *out_node);
 
-const char* AVCALL avstor_get_errstr(void);
+const char* AVCALL avstor_get_last_errmsg(void);
+
+const char *AVCALL avstor_errtostr(int err_code);
 
 int AVCALL avs_check_cache_consistency(avstor *db);
 

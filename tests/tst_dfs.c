@@ -89,7 +89,7 @@ static int dfs_create_db(void *param)
     /* create (or overwrite) a new database file */
     if (AVSTOR_OK != (res = avstor_open(&db, p->filename, p->cache_size,
                                         AVSTOR_OPEN_CREATE | AVSTOR_OPEN_READWRITE | AVSTOR_OPEN_AUTOSAVE))) {
-        printf("%sERROR: avstor_open failed with %i%s\n", YEL, res, CRESET);
+        avstest_print_err("avstor_open", res);
         free(st);
         return 0;
     }
@@ -124,7 +124,7 @@ static int dfs_create_db(void *param)
             p_new_node = (level < (p->level_count - 1)) ? &new_node : NULL;
 
             if (AVSTOR_OK != (res = avstor_create_key(&top->node, &key, p_new_node))) {
-                printf("%sERROR: avstor_create_key failed with %i%s\n", YEL, res, CRESET);
+                avstest_print_err("avstor_create_key", res);
                 if (p_new_node && (res == AVSTOR_EXISTS)) {
                     /* new_node is valid if we get this error, so destroy */
                     avstor_node_destroy(p_new_node);
@@ -147,7 +147,7 @@ static int dfs_create_db(void *param)
         }
     }
     if (AVSTOR_OK != (res = avstor_commit(db, 1))) {
-        printf("%sERROR: avstor_commit failed with %i%s\n", YEL, res, CRESET);
+        avstest_print_err("avstor_commit", res);
         result = 0;
     }
     else {
@@ -203,7 +203,7 @@ static int dfs_traversal_proc(avstor *db, avstor_node *parent,
 
     top->result = avstor_inorder_first(&top->inorder_st, parent, NULL, AVSTOR_KEYS, &top->node);
     if (top->result != AVSTOR_OK && top->result != AVSTOR_NOTFOUND) {
-        printf("%sERROR: avstor_inorder_first failed with %i%s\n", YEL, top->result, CRESET);
+        avstest_print_err("avstor_inorder_first", top->result);
         result = 0;
         goto close_and_return;
     }
@@ -214,7 +214,7 @@ static int dfs_traversal_proc(avstor *db, avstor_node *parent,
 
             /* process the previous node */
             if (AVSTOR_OK != (res = avstor_get_name(&prev_node, &key))) {
-                printf("%sERROR: avstor_get_name failed with %i%s\n", YEL, res, CRESET);
+                avstest_print_err("avstor_get_name", res);
                 result = 0;
                 goto close_and_return;
             }
@@ -223,7 +223,7 @@ static int dfs_traversal_proc(avstor *db, avstor_node *parent,
             /* advance to next node */
             top->result = avstor_inorder_next(&top->inorder_st, &top->node);
             if (top->result != AVSTOR_OK && top->result != AVSTOR_NOTFOUND) {
-                printf("%sERROR: avstor_inorder_next failed with %i%s\n", YEL, res, CRESET);
+                avstest_print_err("avstor_inorder_next", top->result);
                 result = 0;
                 goto close_and_return;
             }
@@ -233,7 +233,7 @@ static int dfs_traversal_proc(avstor *db, avstor_node *parent,
                 top = &st[++level];
                 top->result = avstor_inorder_first(&top->inorder_st, &prev_node, NULL, AVSTOR_KEYS, &top->node);
                 if (top->result != AVSTOR_OK && top->result != AVSTOR_NOTFOUND) {
-                    printf("%sERROR: avstor_inorder_first failed with %i%s\n", YEL, res, CRESET);
+                    avstest_print_err("avstor_inorder_first", top->result);
                     result = 0;
                     goto close_and_return;
                 }
@@ -275,7 +275,7 @@ static int dfs_traversal_st(void *param)
 
     /* open database file created in previous test */
     if (AVSTOR_OK != (res = avstor_open(&db, p->filename, p->cache_size, AVSTOR_OPEN_READONLY))) {
-        printf("%sERROR: avstor_open failed with %i%s\n", YEL, res, CRESET);
+        avstest_print_err("avstor_open", res);
         return 0;
     }
 
