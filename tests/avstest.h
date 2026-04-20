@@ -34,10 +34,12 @@
 #ifndef AVSTEST_H
 #define AVSTEST_H
 
+#include <stdint.h>
+
 #define AVSTEST_MUST_PASS   1 
 #define AVSTEST_SKIP        2
 
-typedef int (*avstest_fn)(void *param);
+typedef int (*avstest_fn)(void *param, int64_t *out_node_total, int64_t *out_bytes_total);
 
 typedef struct AvsTest {
     const char          *test_name;
@@ -74,5 +76,6 @@ extern char* CRESET;
         YEL, (fn_name), avstor_errtostr(err_code), avstor_get_last_errmsg(), CRESET) 
 
 int avstest_run_test(const AvsTest *test, double *duration);
+int64_t avstest_getfilesize(const char *filename);
 
 #endif

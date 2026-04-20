@@ -57,7 +57,7 @@ struct dfs_traversal_param {
 
 long actual_node_total;
 
-static int dfs_create_db(void *param)
+static int dfs_create_db(void *param, int64_t *out_node_total, int64_t *out_bytes_total)
 {
     avstor_key key;
     struct dfs_create_db_param *p = (struct dfs_create_db_param*)param;
@@ -71,6 +71,9 @@ static int dfs_create_db(void *param)
     long expected_node_total;
     long nodes_per_level = 1;
     int i, res, result, level = 0;
+
+    *out_node_total = 0;
+    *out_bytes_total = 0;
 
     /* Calculate expected number of nodes to be created */
     expected_node_total = 0;
@@ -166,6 +169,8 @@ close_and_return:
     }
     free(st);
     avstor_close(db);
+    *out_node_total = actual_node_total;
+    *out_bytes_total = avstest_getfilesize(p->filename);
     return result;
 }
 
@@ -261,7 +266,7 @@ close_and_return:
     return result;
 }
 
-static int dfs_traversal_st(void *param)
+static int dfs_traversal_st(void *param, int64_t *out_node_total, int64_t *out_bytes_total)
 {
     avstor_node parent;
     struct dfs_traversal_param* p = (struct dfs_traversal_param*)param;
@@ -272,6 +277,9 @@ static int dfs_traversal_st(void *param)
     /* node values are sequential starting at zero, so their sum
        can be calculated by the known formula n(n-1)/2 */
     int64_t expected_sum_values = (int64_t)actual_node_total * ((int64_t)actual_node_total - 1) / 2;
+
+    *out_node_total = 0;
+    *out_bytes_total = 0;
 
     /* open database file created in previous test */
     if (AVSTOR_OK != (res = avstor_open(&db, p->filename, p->cache_size, AVSTOR_OPEN_READONLY))) {

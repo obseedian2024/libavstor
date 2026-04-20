@@ -45,9 +45,11 @@
 #endif
 #elif defined(__unix__)
 #include <unistd.h>
-#else 
-
 #endif 
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 #if !defined(__unix__)
 #include <io.h>
@@ -137,17 +139,39 @@ static void show_result(const char *descr, int result, double duration)
            result ? "PASS" : "FAIL", CRESET, WHT, duration, CRESET);
 }
 
+static void show_perfstat(int64_t node_total, int64_t bytes_total, double duration)
+{
+    double kbytes_per_sec;
+    char buf_bytes[30];
+    if (node_total <= 0 || bytes_total <= 0 || duration <= 0) {
+        return;
+    }
+    kbytes_per_sec = (double)bytes_total / (duration * 1024.0);
+    if (kbytes_per_sec < 1000.0) {
+        sprintf(buf_bytes, "%.3f KB/s", kbytes_per_sec);
+    }
+    else if (kbytes_per_sec < 1000000.0) {
+        sprintf(buf_bytes, "%.3f MB/s", kbytes_per_sec / 1024.0);
+    }
+    else {
+        sprintf(buf_bytes, "%.3f GB/s", kbytes_per_sec / (1024.0 * 1024.0));
+    }
+    printf("...Processed %.0f nodes/s (%s)\n", (double)node_total / duration, buf_bytes);
+}
+
 int avstest_run_test(const AvsTest *test, double *duration)
 {
     Timer tm;
     int result;
-
+    int64_t nodes_total, bytes_total;
     printf("Running %s...\n", test->test_name);
     timer_start(&tm);
-    result = test->test_fn(test->params);
+    result = test->test_fn(test->params, &nodes_total, &bytes_total);
     timer_stop(&tm);
 
     *duration = tm.secs;
+
+    show_perfstat(nodes_total, bytes_total, tm.secs);
     show_result(NULL, result, tm.secs);
     return result;
 }
@@ -265,6 +289,29 @@ static int init_term(void)
     YEL = "";
     CRESET = "";
     return 0;
+}
+
+int64_t avstest_getfilesize(const char *filename)
+{
+#if defined(_WIN32)
+    WIN32_FIND_DATAA fdata;
+    HANDLE hSearch;
+    int64_t filesize;
+    ZeroMemory(&fdata, sizeof(WIN32_FIND_DATAA));
+    if (INVALID_HANDLE_VALUE == (hSearch = FindFirstFileA(filename, &fdata))) {
+        return -1;
+    }
+    filesize = ((int64_t)fdata.nFileSizeHigh << 32) | fdata.nFileSizeLow;
+    FindClose(hSearch);
+    return filesize;
+#else
+    struct stat fdata;
+    memset(&fdata, 0, sizeof(struct stat));
+    if (stat(filename, &fdata)) {
+        return -1;
+    }
+    return (int64_t)fdata.st_size;
+#endif
 }
 
 int is_term;
