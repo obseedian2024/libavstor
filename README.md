@@ -2,7 +2,7 @@
 libavstor is a highly experimental, portable low-level C library to create files with hierarchial data similar to the Windows registry. Keys and values are stored in the file using AVL trees. The library is implemented in a single source file and a header file, allowing easy integration into any project.
 
 ## Features
-* Either 64-bit or 32-bit files, allowing 16 TB or 2 GB maximum file sizes, respectively
+* Either 64-bit or 32-bit files, allowing 16 TB or 64 GB maximum file sizes, respectively
 * Flexible data types for keys via user-defined key comparer functions
 * Data types for values: int32, int64, double, short binary/character (240 bytes or less)
 * Manual or auto-commit option
@@ -14,9 +14,9 @@ libavstor is a highly experimental, portable low-level C library to create files
 ## Compiling libavstor
 libavstor is written in C89 dialect using some common extensions, so most recent and even not so recent compilers should work. There is no requirement for a particular build system.
 * clang: Tested on Windows and FreeBSD, either 32-bit or 64-bit. (Use gmake on BSD systems).
-* Visual Studio: All versions should work from 4.1 up (should even work on NT 3.51 MIPS). Project files (for Visual Studio 2022) are located in proj\vs.
+* Visual Studio: All versions should work from 4.1 up (should even work on NT 3.51 MIPS). Project files (for Visual Studio 2022) are located in proj, under vc41, vs60 or vs2022.
 * OpenWatcom 1.9: Windows NT 3.51+, DOS, DOS 32-bit (using DOS extender), OS/2 1.3+ (16 or 32 bit). Project files located in proj\watcom.
-* GCC: tested under WSL
+* GCC: tested under WSL.
 
 ### Build options
 Several features can be included/enabled via macro definitions:
