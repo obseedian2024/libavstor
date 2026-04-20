@@ -31,10 +31,10 @@ ifeq ($(FILE_64BIT), 1)
 	CFLAGS += -DAVSTOR_CONFIG_FILE_64BIT=1
 endif
 
-ifeq ($(RELEASE), 1)
-	CFLAGS += -DNDEBUG -O3 -g0
-else
+ifeq ($(DEBUG), 1)
 	CFLAGS += -D_DEBUG -g3
+else
+	CFLAGS += -DNDEBUG -O3 -g0
 endif
 
 all: $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(LIB_FILE) $(AVSCRDB_FILE) $(AVSTEST_FILE)
