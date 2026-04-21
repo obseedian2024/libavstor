@@ -31,4 +31,5 @@ EXPORTS
 	avstor_delete
 	avstor_inorder_first
 	avstor_inorder_next
-	avstor_get_errstr
+	avstor_get_last_errmsg
+	avstor_errtostr
