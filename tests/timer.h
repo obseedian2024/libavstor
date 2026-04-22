@@ -44,30 +44,25 @@
 #define TIMER_HIRES 1
 
 typedef struct Timer {
+    double              secs;
+    int                 flags;
 #if defined(__unix__)
-    clockid_t               clock_id;
-#endif
-    int                     flags;
-    double                  secs;
+    clockid_t           clock_id;
+    struct timespec     ts_start_time;
+    struct timespec     ts_end_time;
+#elif defined(_WIN32)       
     union {
-#if defined(_WIN32)       
-        struct {
-            LARGE_INTEGER   pc_start_time;
-            LARGE_INTEGER   pc_end_time;
-        };
-#endif
-        struct {
-            clock_t         start_time;
-            clock_t         end_time;
-        };
-
-#if defined(__unix__)
-        struct {
-            struct timespec ts_start_time;
-            struct timespec ts_end_time;
-        };
-#endif
+        LARGE_INTEGER   pc_start_time;
+        clock_t         start_time;
     };
+    union {
+        LARGE_INTEGER   pc_end_time;
+        clock_t         end_time;
+    };
+#else
+    clock_t             start_time;
+    clock_t             end_time;
+#endif
 } Timer;
 
 void timer_start(Timer *t);

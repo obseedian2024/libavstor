@@ -240,7 +240,7 @@
 #define MAX_KEY_LEN             240u
 #define MAX_BINARY_LEN          250u
 #define MAX_STRING_LEN          250u
-#define SIZE_PAGE_HDR           offsetof(AvPage, hdr_end)
+#define SIZE_PAGE_HDR           offsetof(AvPage, h.hdr_end)
 #define SIZE_NODE_HDR           offsetof(AvNode, name)
 #define PAGE_MASK               (~((uintptr_t)PAGE_SIZE - 1u))
 #define OFFSET_MASK             (~((avstor_off)PAGE_SIZE - 1u))
@@ -401,7 +401,7 @@ struct AvPage {
 
             // placeholder for end of hdr
             char                hdr_end;
-        };
+        } h;
 
         // Data page, type PAGE_KEYS
         struct {
@@ -421,7 +421,7 @@ struct AvPage {
             // variable size actually, should be flexible array but to support old compilers
             // it is done this way
             uint16_t            nodes[1];
-        };
+        } d;
     };
 };
 
@@ -1728,8 +1728,8 @@ static __inline void assign_nref(NodeRef src, NodeRef *dest)
 static __inline AvNode* get_node(AvPage *page, unsigned index)
 {
     uint16_t node_offset; 
-    assert(index < NODES_PER_PAGE && index < page->index_count);
-    node_offset = page->nodes[index];
+    assert(index < NODES_PER_PAGE && index < page->d.index_count);
+    node_offset = page->d.nodes[index];
     if (node_offset == INVALID_INDEX) {
         THROW(AVSTOR_INVOPER, "Node has been deleted.");
     }
@@ -1766,10 +1766,10 @@ static __inline void set_node_size(AvNode* node, unsigned nodesz)
 
 static unsigned get_page_free_space(AvPage* page)
 {
-    unsigned top = page->top;
+    unsigned top = page->d.top;
     unsigned bottom = align_node(  //compensate for alignment
-                                 offsetof(AvPage, nodes[page->index_count])
-                                 + (page->index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated
+                                 offsetof(AvPage, d.nodes[page->d.index_count])
+                                 + (page->d.index_freelist == INVALID_INDEX ? 2 : 0)); // compensate in case a new index has to be allocated
     return (top > bottom) ? top - bottom : 0;
 }
 
@@ -2184,16 +2184,16 @@ static AvPage* create_page(avstor *db, unsigned type)
     AvPage *hdr = db->cache.header;
     AvPage *page;
 
-    if (hdr->pagecount == MAX_FILE_PAGES) {
+    if (hdr->h.pagecount == MAX_FILE_PAGES) {
         THROW(AVSTOR_INVOPER, "Maximum allowable file size exceeded");
     }
-    page = cache_lookup(db, hdr->pagecount, 0);
+    page = cache_lookup(db, hdr->h.pagecount, 0);
     //memcpy(&page->id, &PAGE_ID, sizeof(PAGE_ID));
     page->type = (uint8_t)type;
-    page->top = PAGE_SIZE;
-    page->index_freelist = INVALID_INDEX;
+    page->d.top = PAGE_SIZE;
+    page->d.index_freelist = INVALID_INDEX;
     set_page_dirty(page);
-    hdr->pagecount++;
+    hdr->h.pagecount++;
     set_page_dirty(hdr);
 
     return page;
@@ -2214,7 +2214,7 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
         set_page_dirty(page);
     }
     else {
-        uint32_t page_num = db->cache.header->page_pool[page_pool];
+        uint32_t page_num = db->cache.header->h.page_pool[page_pool];
         if (page_num != 0) {
             page = get_page(db, (avstor_off)page_num);
             if (size > get_page_free_space(page)) {
@@ -2230,27 +2230,27 @@ static AvNode* alloc_node(avstor *db, AvPage *preferred_page, unsigned size, uns
             if (size > get_page_free_space(page)) {
                 THROW(AVSTOR_INTERNAL, MSG_NO_SPACE_IN_PAGE);
             }
-            db->cache.header->page_pool[page_pool] = (uint32_t)page->page_num;
+            db->cache.header->h.page_pool[page_pool] = (uint32_t)page->page_num;
         }
     }
 
-    nextfree = page->index_freelist;
+    nextfree = page->d.index_freelist;
     //set_page_dirty(page);
     if (nextfree == INVALID_INDEX) {
-        slot = &page->nodes[page->index_count];
-        page->index_count++;
+        slot = &page->d.nodes[page->d.index_count];
+        page->d.index_count++;
     }
     else {
         slot = (uint16_t*)PTR(page, nextfree);
-        page->index_freelist = *slot;
+        page->d.index_freelist = *slot;
     }
-    page->top -= size;
-    *slot = page->top;
-    index = ((PTR_DIFF(page, slot) - offsetof(AvPage, nodes)) / sizeof(uint16_t));
+    page->d.top -= size;
+    *slot = page->d.top;
+    index = ((PTR_DIFF(page, slot) - offsetof(AvPage, d.nodes)) / sizeof(uint16_t));
     node = get_node(page, index);
 
     // check if we have overwritten the node index array
-    if ((void*)node < (void*)&page->nodes[page->index_count]) {
+    if ((void*)node < (void*)&page->d.nodes[page->d.index_count]) {
         THROW(AVSTOR_INTERNAL, MSG_PAGE_CORRUPTED);
     }
 
@@ -2277,23 +2277,23 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
     if (newsize > oldsize && (newsize - oldsize) > page_free) {
         THROW(AVSTOR_INTERNAL, "resize_node() failed");
     }
-    newtop = page->top + oldsize - newsize;
+    newtop = page->d.top + oldsize - newsize;
     next = PTR(node, oldsize);
     if (newsize == 0) { // free the node instead of resize
         //check if we deallocated the last index
-        uint16_t* oldindex = &page->nodes[node->index];
-        if (node->index == page->index_count - 1) {
+        uint16_t* oldindex = &page->d.nodes[node->index];
+        if (node->index == page->d.index_count - 1) {
             // yes, just decrease count and zero the last one
             *oldindex = 0;
-            page->index_count--;
+            page->d.index_count--;
         }
         else {
             // no, add it to free index list
-            *oldindex = page->index_freelist;
-            page->index_freelist = offsetof(AvPage, nodes[node->index]);
+            *oldindex = page->d.index_freelist;
+            page->d.index_freelist = offsetof(AvPage, d.nodes[node->index]);
         }
     }
-    src = PTR(page, page->top);
+    src = PTR(page, page->d.top);
     dest = PTR(page, newtop);
     count = PTR_DIFF(src, node);
     set_node_size(node, newsize);
@@ -2309,12 +2309,12 @@ static AvNode* resize_node(AvNode* node, unsigned newsize)
     // Adjust index offsets
     cur = dest;
     while (cur < next) {
-        uint16_t* curslot = &page->nodes[cur->index];
+        uint16_t* curslot = &page->d.nodes[cur->index];
         *curslot = (uint16_t)((int)*curslot + ((int)oldsize - (int)newsize));
         assert(is_node_addr_valid(NULL, cur));
         cur = (AvNode*)PTR(cur, get_node_size(cur));
     }
-    page->top = (uint16_t)newtop;
+    page->d.top = (uint16_t)newtop;
     return PTR(node, (int)oldsize - (int)newsize);
 }
 
@@ -2606,7 +2606,7 @@ int AVCALL avstor_create_key(const avstor_node *parent, const avstor_key *key, a
         }
         else {
             level = 1; // level 0 is reserved
-            rootref = &db->cache.header->root;
+            rootref = &db->cache.header->h.root;
         }
 
         if ((node = find_node_with_backtrace(db, key, &st, rootref, &last_ref))) {
@@ -2844,7 +2844,7 @@ static void create_backlink(avstor *db, AvStack *st, avstor_off link, avstor_off
     TRY(ex)
     {
         AvNodeData *ndata;
-        if (!(node = find_node_with_backtrace(db, &link_key, st, &db->cache.header->root_links, &last_ref))) {
+        if (!(node = find_node_with_backtrace(db, &link_key, st, &db->cache.header->h.root_links, &last_ref))) {
             node = create_node(db, get_ptr_page(last_ref), &link_key, 0, AVSTOR_TYPE_KEY, 0);
             ndata = get_node_data(node);
             ndata->vkey.level = 0;
@@ -3260,7 +3260,7 @@ static void AVCALL db_open_file(avstor *db, const char* filename, int oflags)
         THROW(AVSTOR_CORRUPT, "page id is not 'AVST'.");
     }*/
 
-    if (hdr.pagesize != PAGE_SIZE) {
+    if (hdr.h.pagesize != PAGE_SIZE) {
         THROW(AVSTOR_CORRUPT, "Invalid page size.");
     }
     if (AVSTOR_OK != (result = read_page(db, 0, db->cache.header))) {
@@ -3286,9 +3286,9 @@ static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
     hdr->page_num = 0;
     hdr->type = PAGE_HDR;
     set_page_dirty(hdr);
-    hdr->pagecount = 1;
-    hdr->pagesize = PAGE_SIZE;
-    hdr->root = NODEREF_NULL;
+    hdr->h.pagecount = 1;
+    hdr->h.pagesize = PAGE_SIZE;
+    hdr->h.root = NODEREF_NULL;
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
     hdr->flags = AVSTOR_FILE_64BIT;
 #endif
@@ -3417,7 +3417,7 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
             ref = &get_node_data(parent_node)->vkey.value_root;
         }
         else {
-            ref = !parent_node ? &db->cache.header->root : &get_node_data(parent_node)->vkey.subkey_root;
+            ref = !parent_node ? &db->cache.header->h.root : &get_node_data(parent_node)->vkey.subkey_root;
         }
 
         if ((out_node = find_key(db, key, ref))) {
@@ -3518,7 +3518,7 @@ static int exists_link_to_node(avstor *db, AvNode *target)
     link_key.len = sizeof(link_ofs);
     link_key.comparer = offset_comparer;
 
-    link_node = find_key(db, &link_key, &db->cache.header->root_links);
+    link_node = find_key(db, &link_key, &db->cache.header->h.root_links);
     result = link_node != NULL;
     unlock_ptr_checked(link_node);
     return result;
@@ -3536,7 +3536,7 @@ static void delete_backlink(avstor *db, AvNode *node)
 
     TRY(ex)
     {
-        if ((link_node = find_node_with_backtrace(db, &link_key, &st, &db->cache.header->root_links, NULL))) {
+        if ((link_node = find_node_with_backtrace(db, &link_key, &st, &db->cache.header->h.root_links, NULL))) {
             AvStack st_link;
             AvNodeData *lk_data = get_node_data(link_node);
 
@@ -3589,7 +3589,7 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
                 rootref = &get_node_data(parent_node)->vkey.value_root;
             }
             else {
-                rootref = !parent_node ? &db->cache.header->root : &get_node_data(parent_node)->vkey.subkey_root;
+                rootref = !parent_node ? &db->cache.header->h.root : &get_node_data(parent_node)->vkey.subkey_root;
             }
             if ((node = find_node_with_backtrace(db, key, &st, rootref, &last_ref))) {
                 if (NODE_TYPE(node) == AVSTOR_TYPE_KEY) {
@@ -3766,7 +3766,7 @@ int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, c
             ofs = nref_to_ofs(get_node_data(parent_node)->vkey.value_root);
         }
         else {
-            ofs = nref_to_ofs(!parent_node ? db->cache.header->root : get_node_data(parent_node)->vkey.subkey_root);
+            ofs = nref_to_ofs(!parent_node ? db->cache.header->h.root : get_node_data(parent_node)->vkey.subkey_root);
         }
         unlock_ptr_checked(parent_node);
         parent_node = NULL;

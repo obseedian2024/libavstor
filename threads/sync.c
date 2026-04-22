@@ -75,7 +75,7 @@ typedef union WaiterState {
     struct {
         short sema;
         short max_waiters;
-    };
+    } s;
     int       state;
 } WaiterState;
 
@@ -155,13 +155,13 @@ static int __inline _cnd_acquire_sema(cnd_t *cond)
     cur.state = atomic_load(&cond->_state);
     do {
         next = cur;
-        next.sema--;
-        if (-next.sema > next.max_waiters) {
-            next.max_waiters = -next.sema;
+        next.s.sema--;
+        if (-next.s.sema > next.s.max_waiters) {
+            next.s.max_waiters = -next.s.sema;
         }
     } while (!atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state));
 
-    return next.sema < 0;
+    return next.s.sema < 0;
 }
 
 //
@@ -173,11 +173,11 @@ static int __inline _cnd_release_sema(cnd_t *cond)
     WaiterState cur;
     WaiterState next;
     cur.state = atomic_load(&cond->_state);
-    while (cur.sema < cur.max_waiters) {
+    while (cur.s.sema < cur.s.max_waiters) {
         next = cur;
-        next.sema++;
+        next.s.sema++;
         if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
-            return cur.sema < 0;
+            return cur.s.sema < 0;
         }
     }
     return 0;
@@ -186,8 +186,8 @@ static int __inline _cnd_release_sema(cnd_t *cond)
 int __cdecl cnd_init(cnd_t* cond)
 {
     WaiterState st;
-    st.max_waiters = 1;
-    st.sema = 0;
+    st.s.max_waiters = 1;
+    st.s.sema = 0;
 
     if (!(cond->_ksem = CreateSemaphoreA(NULL, 0, 0x7FFFFFFF, NULL))) {
         return thrd_error;
@@ -241,12 +241,12 @@ int __cdecl cnd_broadcast(cnd_t* cond)
     WaiterState cur;
     WaiterState next;
     cur.state = atomic_load(&cond->_state);
-    while (cur.sema < cur.max_waiters) {
+    while (cur.s.sema < cur.s.max_waiters) {
         next = cur;
-        next.sema = next.max_waiters;
+        next.s.sema = next.s.max_waiters;
         if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
-            if (cur.sema < 0) {
-                return ReleaseSemaphore(cond->_ksem, -cur.sema, NULL) ? thrd_success : thrd_error;
+            if (cur.s.sema < 0) {
+                return ReleaseSemaphore(cond->_ksem, -cur.s.sema, NULL) ? thrd_success : thrd_error;
             }
             break;
         }
