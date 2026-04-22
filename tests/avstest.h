@@ -65,15 +65,15 @@ typedef struct AvsTests {
 #define IMPORT_TESTS(tests)   extern const AvsTests tests##_TESTS
 
 extern int is_term;
-extern char* RED;
-extern char* GRN;
-extern char* YEL;
-extern char* WHT;
-extern char* CRESET;
+extern char* vtRED;
+extern char* vtGRN;
+extern char* vtYEL;
+extern char* vtWHT;
+extern char* vtCRESET;
 
 #define avstest_print_err(fn_name, err_code) \
     printf("%sERROR: %s failed with %s: %s%s\n", \
-        YEL, (fn_name), avstor_errtostr(err_code), avstor_get_last_errmsg(), CRESET) 
+        vtYEL, (fn_name), avstor_errtostr(err_code), avstor_get_last_errmsg(), vtCRESET) 
 
 int avstest_run_test(const AvsTest *test, double *duration);
 int64_t avstest_getfilesize(const char *filename);

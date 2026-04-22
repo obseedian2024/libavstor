@@ -85,7 +85,7 @@ static int dfs_create_db(void *param, int64_t *out_node_total, int64_t *out_byte
     /* allocate stack for a depth-first insertion algorithm */
     st = calloc(p->level_count, sizeof(struct st_elem));
     if (!st) {
-        printf("%sERROR: calloc failed%s\n", YEL, CRESET);
+        printf("%sERROR: calloc failed%s\n", vtYEL, vtCRESET);
         return 0;
     }
 
@@ -156,7 +156,7 @@ static int dfs_create_db(void *param, int64_t *out_node_total, int64_t *out_byte
     else {
         if (expected_node_total != actual_node_total) {
             result = 0;
-            printf("%sERROR: Total nodes created not equal expected number of nodes.%s\n", YEL, CRESET);
+            printf("%sERROR: Total nodes created not equal expected number of nodes.%s\n", vtYEL, vtCRESET);
         }
         else {
             result = 1;
@@ -193,7 +193,7 @@ static int dfs_traversal_proc(avstor *db, avstor_node *parent,
     /* allocate stack for a depth-first traversal algorithm */
     st = calloc(param->max_levels, sizeof(struct st_elem));
     if (!st) {
-        printf("%sERROR: calloc failed%s\n", YEL, CRESET);
+        printf("%sERROR: calloc failed%s\n", vtYEL, vtCRESET);
         return 0;
     }    
 
@@ -292,7 +292,7 @@ static int dfs_traversal_st(void *param, int64_t *out_node_total, int64_t *out_b
     result = dfs_traversal_proc(db, &parent, p, &actual_sum_values);
     avstor_close(db);
     if (expected_sum_values != actual_sum_values) {
-        printf("%sERROR: Unexpected sum of node values%s\n", YEL, CRESET);
+        printf("%sERROR: Unexpected sum of node values%s\n", vtYEL, vtCRESET);
         result = 0;
     }    
     return result;

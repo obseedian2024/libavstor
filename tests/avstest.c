@@ -117,11 +117,11 @@ static const char *AVS_TARGET_ARCH =
 #endif
 ;
 
-char* RED = "\033[1;31m";
-char* GRN = "\033[1;32m";
-char* YEL = "\033[1;33m";
-char* WHT = "\033[1;37m";
-char* CRESET = "\033[0m";
+char* vtRED = "\033[1;31m";
+char* vtGRN = "\033[1;32m";
+char* vtYEL = "\033[1;33m";
+char* vtWHT = "\033[1;37m";
+char* vtCRESET = "\033[0m";
 
 static void show_result(const char *descr, int result, double duration)
 {
@@ -135,8 +135,8 @@ static void show_result(const char *descr, int result, double duration)
         len_descr = strlen(descr);
         memcpy(buf, descr, len_descr > SZBUF_M1 ? SZBUF_M1 : len_descr);
     }
-    printf("%s [ %s%s%s ] [ %s%12.4f%s ]\n", buf, result ? GRN : RED,
-           result ? "PASS" : "FAIL", CRESET, WHT, duration, CRESET);
+    printf("%s [ %s%s%s ] [ %s%12.4f%s ]\n", buf, result ? vtGRN : vtRED,
+           result ? "PASS" : "FAIL", vtCRESET, vtWHT, duration, vtCRESET);
 }
 
 static void show_perfstat(int64_t node_total, int64_t bytes_total, double duration)
@@ -189,7 +189,7 @@ static int run_all_tests(const AvsTests* *tests, double *total_duration)
 
         for (i = 0; i < (*tests)->test_count; i++) {
             if ((*tests)->test_list[i].flags & AVSTEST_SKIP) {
-                printf("%sSkipping %s.%s\n", YEL, (*tests)->test_list[i].test_name, CRESET);
+                printf("%sSkipping %s.%s\n", vtYEL, (*tests)->test_list[i].test_name, vtCRESET);
             }
             else {
                 double duration;
@@ -198,7 +198,7 @@ static int run_all_tests(const AvsTests* *tests, double *total_duration)
                 file_duration += duration;
                 *total_duration += duration;
                 if (!test_result && ((*tests)->test_list[i].flags & AVSTEST_MUST_PASS)) {
-                    printf("%sPrevious test marked as MUST PASS, stopping tests.%s\n\n", YEL, CRESET);
+                    printf("%sPrevious test marked as MUST PASS, stopping tests.%s\n\n", vtYEL, vtCRESET);
                     return 0;
                 }
             }
@@ -280,14 +280,14 @@ static int is_terminal(void)
 static int init_term(void)
 {
     if (is_terminal()) {
-        fputs(CRESET, stdout);
+        fputs(vtCRESET, stdout);
         return 1;
     }
-    RED = "";
-    GRN = "";
-    WHT = "";
-    YEL = "";
-    CRESET = "";
+    vtRED = "";
+    vtGRN = "";
+    vtWHT = "";
+    vtYEL = "";
+    vtCRESET = "";
     return 0;
 }
 
