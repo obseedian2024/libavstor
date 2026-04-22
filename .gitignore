@@ -377,3 +377,4 @@ FodyWeavers.xsd
 *.map
 *.sym
 *.exe
+*.err
