@@ -318,6 +318,7 @@ static int init_term(void)
     vtGRN = "";
     vtWHT = "";
     vtYEL = "";
+    vtCYN = "";
     vtCRESET = "";
     return 0;
 }
