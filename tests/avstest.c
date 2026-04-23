@@ -360,13 +360,12 @@ int main(void)
     double duration;
     int result;
 
+    is_term = init_term();
     printf("libavstor Test Suite\n"
            "BSD 3-Clause License\n"
            "Copyright (c) 2025 Tamas Fejerpataky\n"
            "See project at https://github.com/obseedian2024/libavstor\n");
     printf("Target: %s%s%s\n\n", vtCYN, AVS_TARGET_ARCH, vtCRESET);
-
-    is_term = init_term();
 
     result = run_all_tests(ALL_TESTS, &duration);
 
