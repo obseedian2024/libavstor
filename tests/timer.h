@@ -48,8 +48,14 @@ typedef struct Timer {
     int                 flags;
 #if defined(__unix__)
     clockid_t           clock_id;
-    struct timespec     ts_start_time;
-    struct timespec     ts_end_time;
+    union {
+        struct timespec     ts_start_time;
+        clock_t             start_time;
+    };
+    union {
+        struct timespec     ts_end_time;
+        clock_t             end_time;
+    };
 #elif defined(_WIN32)       
     union {
         LARGE_INTEGER   pc_start_time;
