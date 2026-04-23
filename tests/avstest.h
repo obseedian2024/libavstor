@@ -68,6 +68,7 @@ extern int is_term;
 extern char* vtRED;
 extern char* vtGRN;
 extern char* vtYEL;
+extern char* vtCYN;
 extern char* vtWHT;
 extern char* vtCRESET;
 

@@ -122,6 +122,7 @@ const char* vtDSR = "\033[6n"; //Device Attributes sequence
 char* vtRED = "\033[1;31m";
 char* vtGRN = "\033[1;32m";
 char* vtYEL = "\033[1;33m";
+char* vtCYN = "\033[1;36m";
 char* vtWHT = "\033[1;37m";
 char* vtCRESET = "\033[0m";
 
@@ -157,7 +158,8 @@ static void show_perfstat(int64_t node_total, int64_t bytes_total, double durati
     else {
         sprintf(buf_bytes, "%.3f GB/s", kbytes_per_sec / (1024.0 * 1024.0));
     }
-    printf("...Processed %.0f nodes/s (%s)\n", (double)node_total / duration, buf_bytes);
+    printf("...Processed %s%.0f%s nodes/s (%s%s%s)\n", vtWHT, (double)node_total / duration,
+        vtCRESET, vtWHT, buf_bytes, vtCRESET);
 }
 
 int avstest_run_test(const AvsTest *test, double *duration)
@@ -361,7 +363,7 @@ int main(void)
            "BSD 3-Clause License\n"
            "Copyright (c) 2025 Tamas Fejerpataky\n"
            "See project at https://github.com/obseedian2024/libavstor\n");
-    printf("Target: %s\n\n", AVS_TARGET_ARCH);
+    printf("Target: %s%s%s\n\n", vtCYN, AVS_TARGET_ARCH, vtCRESET);
 
     is_term = init_term();
 
