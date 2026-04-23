@@ -30,19 +30,11 @@
 * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #include "timer.h"
-
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN 1
-#include <Windows.h>
-#else 
-#include <time.h>
-#endif
 
 void timer_start(Timer *t)
 {
