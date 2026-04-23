@@ -145,7 +145,7 @@
 #if (defined(_WIN32) && !defined(_WINDLL)) || defined(__unix__)
 #if defined(__WATCOMC__) || defined(_MSC_VER)
 #define THREAD_LOCAL __declspec(thread)
-#elif defined(__clang__) || defined(__GNUC__)
+#elif defined(__clang__) || defined(__GNUC__) || defined(__BORLANDC__)
 #define THREAD_LOCAL __thread
 #else
 #define THREAD_LOCAL
@@ -1851,7 +1851,6 @@ static __inline void lock_ref(const NodeRef *noderef)
 static AvNode* find_node_with_backtrace(avstor *db, const avstor_key *key, AvStack *st,
                                         NodeRef *root, NodeRef* volatile *out_ref)
 {
-    AvStackData *top = NULL;
     AvNode *cur = NULL;
     st->top = -1;
     st->root = root;
@@ -1865,7 +1864,7 @@ static AvNode* find_node_with_backtrace(avstor *db, const avstor_key *key, AvSta
         cur = lock_node_ex(db, ref);
 
         while (0 != (comp = key->comparer(key->buf, cur->name))) {
-            top = backtrace_push(st);
+            AvStackData *top = backtrace_push(st);
             top->comp = comp;
             top->noderef = nref_to_ofs(*ref);
             unlock_ptr(ref);
@@ -2497,7 +2496,7 @@ int AVCALL avs_check_cache_consistency(avstor *db)
 
 static AvNode* lock_noderef(const avstor_node *parent)
 {
-    AvNode *result = NULL;
+    AvNode *result;
     if (parent->ref == 0) {
         THROW(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
@@ -2839,7 +2838,7 @@ static void create_backlink(avstor *db, AvStack *st, avstor_off link, avstor_off
     avstor_key link_key;
     link_key.buf = &target;
     link_key.len = sizeof(avstor_off);
-    link_key.comparer = &offset_comparer;
+    link_key.comparer = offset_comparer;
 
     TRY(ex)
     {
@@ -3085,7 +3084,7 @@ int AVCALL avstor_get_value(const avstor_node* value, void* buf,
         unsigned node_type, szdata, data_offset;
         const AvNodeClass *node_class;
         const AvNodeData *ndata;
-        size_t bytes_copied = 0;
+        size_t bytes_copied;
         node = lock_noderef(value);
         node_type = NODE_TYPE(node);
         if (node_type == AVSTOR_TYPE_KEY) {
@@ -3271,11 +3270,10 @@ static void AVCALL db_open_file(avstor *db, const char* filename, int oflags)
 
 static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
 {
-    AvPage *hdr = NULL;
+    AvPage *hdr;
     int result;
 
-    result = io_create(filename, oflags);
-    if (result == AVSTOR_INVALID_HANDLE) {
+    if (AVSTOR_INVALID_HANDLE == (result = io_create(filename, oflags))) {
         THROW(AVSTOR_IOERR, "Failed to create file");
     }
     db->file = result;
@@ -3396,7 +3394,6 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
 {
     avstor *db;
     AvNode *volatile parent_node = NULL;
-    AvNode *out_node = NULL;
     int result;
     int isvalue = (flags & AVSTOR_VALUES);
 
@@ -3408,6 +3405,7 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
     rwl_lock_shared(&db->global_rwl);
     TRY(ex)
     {
+        AvNode *out_node;
         NodeRef *ref;
         if (parent->ref != 0) {
             parent_node = lock_keyref(parent);
@@ -3678,14 +3676,13 @@ static __inline avstor_off inorder_state_top(avstor_inorder *st)
 
 static avstor_off find_node_for_inorder(avstor_inorder *st, const avstor_key *key, avstor_off ofs)
 {
-    AvNode *cur = NULL;
     avstor_off result = 0;
-    int is_descending = (st->flags & AVSTOR_DESCENDING);
     avstor *db = st->db;
 
     if (ofs != 0) {
         int comp;
-        cur = lock_node(db, ofs);
+        const int is_descending = (st->flags & AVSTOR_DESCENDING);
+        AvNode *cur = lock_node(db, ofs);
         comp = key->comparer(key->buf, cur->name);
 
         while (1) {

@@ -126,13 +126,12 @@ char* vtCRESET = "\033[0m";
 static void show_result(const char *descr, int result, double duration)
 {
     char buf[50];
-    size_t len_descr = 0;
     const size_t SZBUF_M1 = sizeof(buf) - 1;
 
     memset(&buf, '.', SZBUF_M1);
     buf[SZBUF_M1] = 0;
     if (descr) {
-        len_descr = strlen(descr);
+        const size_t len_descr = strlen(descr);
         memcpy(buf, descr, len_descr > SZBUF_M1 ? SZBUF_M1 : len_descr);
     }
     printf("%s [ %s%s%s ] [ %s%12.4f%s ]\n", buf, result ? vtGRN : vtRED,

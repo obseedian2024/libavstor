@@ -103,7 +103,7 @@ static int dfs_create_db(void *param, int64_t *out_node_total, int64_t *out_byte
 
     /* key length and comparer will be the same for all subtrees */
     key.len = sizeof(AvsDbIntRec);
-    key.comparer = &AvsIntNode_comparer;
+    key.comparer = AvsIntNode_comparer;
 
     while (1) {
         avstor_node new_node, *p_new_node;
@@ -306,8 +306,8 @@ static const struct dfs_traversal_param
 DFS_TRAVERSAL_ST = { TEST_DB, 4096, LEVEL_COUNT };
 
 DEFINE_TEST_LIST(DFS) {
-    { "Create DB for DFS", &dfs_create_db, 0, (void*)&DFS_CREATE_DB_PARAM },
-    { "DFS Traversal (Single Threaded)", &dfs_traversal_st, 0, (void*)&DFS_TRAVERSAL_ST }
+    { "Create DB for DFS", dfs_create_db, 0, (void*)&DFS_CREATE_DB_PARAM },
+    { "DFS Traversal (Single Threaded)", dfs_traversal_st, 0, (void*)&DFS_TRAVERSAL_ST }
 };
 
 DEFINE_TESTS(DFS);
