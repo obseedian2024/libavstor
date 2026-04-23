@@ -117,6 +117,8 @@ static const char *AVS_TARGET_ARCH =
 #endif
 ;
 
+const char* vtDSR = "\033[6n"; //Device Attributes sequence
+
 char* vtRED = "\033[1;31m";
 char* vtGRN = "\033[1;32m";
 char* vtYEL = "\033[1;33m";
@@ -212,50 +214,60 @@ static int run_all_tests(const AvsTests* *tests, double *total_duration)
     return result;
 }
 
-#if !defined(__unix__)
-
-/* Clear console buffer */
-static void kb_clear(void)
-{
-    while (kbhit()) {
-        getch();
-    }
-}
-
-static int check_tty(void)
-{
-    kb_clear();
-    if (!cputs("\033[6n")) {
-        if (kbhit()) {
-            if (getch() == 27) {
-                kb_clear();
-                return 1;
-            }            
-        }        
-        cputs("\015");
-    }
-    return 0;
-}
-#endif
-
 #if defined(_WIN32)
 
+// 
+// Customer Win32 immplementation since C libraries seem wonky for terminal detection
+// especially for Borland C++ 5.0
+//
 static int is_terminal(void)
 {
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE hOutput = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode;
-    if (hConsole == INVALID_HANDLE_VALUE) {
+    if (hOutput == INVALID_HANDLE_VALUE) {
         return 0;
     }
-    if (!GetConsoleMode(hConsole, &mode)) {
-        fprintf(stderr, "GetConsoleMode failed\n");
+    if (!GetConsoleMode(hOutput, &mode)) {
         return 0;
     }
     if (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) {
         return 1;
     }
-    else if (mode & ENABLE_PROCESSED_OUTPUT) {
-        return check_tty();
+    if (mode & ENABLE_PROCESSED_OUTPUT) {        
+        HANDLE hInput = GetStdHandle(STD_INPUT_HANDLE);
+        if (hInput == INVALID_HANDLE_VALUE) {
+            return 0;
+        }
+        if (!GetConsoleMode(hInput, &mode)) {
+            return 0;
+        }
+        if (mode & ENABLE_PROCESSED_INPUT) {
+            DWORD num;
+
+            // Make sure no existing keyboard input to interfere with us
+            FlushConsoleInputBuffer(hInput);
+
+            // Query device status
+            if (!WriteConsoleA(hOutput, vtDSR, (DWORD)strlen(vtDSR), &num, NULL)) {
+                return 0;
+            }
+
+            // Check if there is a response
+            if (GetNumberOfConsoleInputEvents(hInput, &num) && num > 0) {
+                INPUT_RECORD rec;
+
+                // get the first character
+                if (ReadConsoleInputA(hInput, &rec, 1, &num) && num > 0) {
+                    // If the terminal response starts with ESC, we can assume it's a terminal
+                    if (rec.Event.KeyEvent.uChar.AsciiChar == '\033') {
+                         FlushConsoleInputBuffer(hInput);
+                         return 1;
+                    }
+                }
+            }
+            WriteConsoleA(hOutput, "\r", 1, &num, NULL);
+            FlushConsoleInputBuffer(hInput);
+        }
     }
     return 0;
 }
@@ -266,12 +278,30 @@ static int is_terminal(void)
 }
 #else
 
+/* Clear console buffer */
+static void kb_clear(void)
+{
+    while (kbhit()) {
+        getch();
+    }
+}
+
 static int is_terminal(void)
 {
     if (!isatty(STDOUT_FILENO)) {
         return 0;
     }
-    return check_tty();
+    kb_clear();
+    if (!cputs(vtDSR)) {
+        if (kbhit()) {
+            if (getch() == 27) {
+                kb_clear();
+                return 1;
+            }            
+        }        
+        cputs("\015");
+    }
+    return 0;
 }
 #endif
 
