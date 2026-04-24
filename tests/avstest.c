@@ -117,14 +117,14 @@ static const char *AVS_TARGET_ARCH =
 #endif
 ;
 
-const char* vtDSR = "\033[6n"; //Device Attributes sequence
+const char* vtDSR = "\033[6n"; //Device status sequence, also works on ANSI.SYS
 
 char* vtRED = "\033[1;31m";
 char* vtGRN = "\033[1;32m";
 char* vtYEL = "\033[1;33m";
 char* vtCYN = "\033[1;36m";
 char* vtWHT = "\033[1;37m";
-char* vtCRESET = "\033[0m";
+char* vtCRESET = "\033[0m";  //Reset color
 
 static void show_result(const char *descr, int result, double duration)
 {
@@ -361,6 +361,7 @@ int main(void)
     int result;
 
     is_term = init_term();
+
     printf("libavstor Test Suite\n"
            "BSD 3-Clause License\n"
            "Copyright (c) 2025 Tamas Fejerpataky\n"
