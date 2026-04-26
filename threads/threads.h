@@ -94,8 +94,13 @@ typedef struct _usem {
     CRITICAL_SECTION    _cs;
     HANDLE              _event;
 #elif defined(__OS2__)
+#if defined(_M_I86)
     ULONG   _event_sem;
     ULONG   _mtx_sem;
+#else
+    HEV     _event_sem;
+    HMTX    _mtx_sem;
+#endif
 #endif
     int _max_count;
     int _sema_count;
@@ -131,7 +136,11 @@ typedef struct {
 } thrd_t;
 
 struct _wait_item {
-    ULONG               _wait_sema;
+#if defined(_M_I86)
+    ULONG               _wait_event;
+#else
+    HEV                 _wait_event;
+#endif
     struct _wait_item   *_pred;
     struct _wait_item   *_next;
 };
