@@ -223,14 +223,20 @@ int main(void)
     for (i = 0; i < total_cons; i++) {
         cons[i].consumed = 0;
         cons[i].total = 0;
-        thrd_create(&cons[i].thr, &cons_func, &cons[i]);
+        if (thrd_success != thrd_create(&cons[i].thr, &cons_func, &cons[i])) {
+            printf("thrd_create failed\n");
+            abort();
+        }
     }
 
     for (i = 0; i < total_prod; i++)
     {
         prod[i].N1 = 1 + num * i;
         prod[i].N2 = num * (i + 1);
-        thrd_create(&prod[i].thr, &prod_func, &prod[i]);
+        if (thrd_success != thrd_create(&prod[i].thr, &prod_func, &prod[i])) {
+            printf("thrd_create failed\n");
+            abort();
+        }
     }
 
     mtx_lock(&_mtx_done);
@@ -248,7 +254,6 @@ int main(void)
     {
         int res;
         thrd_join(prod[i].thr, &res);
-
         printf("Producer %i produced %li items\n", i, prod[i].produced);
     }
 
