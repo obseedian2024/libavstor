@@ -32,6 +32,9 @@
 
 #include "threads.h"
 
+// These are private declarations used by the modules that don't
+// need to be in threads.h
+
 #if defined(_M_I86)
 typedef USHORT APIRET;
 #endif
@@ -39,7 +42,7 @@ typedef USHORT APIRET;
 struct _tld {
     thrd_t          thr;
 #if defined(__OS2__)
-    struct _tld *next_detach;
+    struct _tld     *next_detach;
     cnd_t           cnd_exited;
     cnd_t           cnd_joined;
     mtx_t           mtx_exit;
