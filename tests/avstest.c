@@ -45,6 +45,10 @@
 #endif
 #elif defined(__unix__)
 #include <unistd.h>
+#elif defined(__OS2__)
+#define INCL_VIO
+#define INCL_DOSERRORS
+#include <os2.h>
 #endif 
 
 #if !defined(_WIN32)
@@ -277,6 +281,19 @@ static int is_terminal(void)
 static int is_terminal(void)
 {
     return isatty(STDOUT_FILENO);
+}
+#elif defined(__OS2__)
+static int is_terminal(void)
+{
+    if (isatty(STDOUT_FILENO)) {
+        // Get ANSI status to make sure
+        USHORT ansi_status;
+        if (NO_ERROR != VioGetAnsi(&ansi_status, 0)) {
+            return 0;
+        }
+        return (int)ansi_status;
+    }
+    return 0;
 }
 #else
 

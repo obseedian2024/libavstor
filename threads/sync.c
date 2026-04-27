@@ -50,7 +50,7 @@
 #include <string.h>
 
 #include "stdatomic.h"
-#include "threads.h"
+#include "_threads.h"
 
 // turn off nannying
 #ifdef _MSC_VER
@@ -256,69 +256,66 @@ int __cdecl cnd_broadcast(cnd_t* cond)
 
 #elif defined(__OS2__)
 
-static USHORT _DosSemWait(HSEM sem, long timo)
-{
-    USHORT result;
-    while (ERROR_INTERRUPT == (result = DosSemWait(sem, timo)))
-        ;
-    return result;
-}
-
-static USHORT _DosSemRequest(HSEM sem, long timo)
-{
-    USHORT result;
-    while (ERROR_INTERRUPT == (result = DosSemRequest(sem, timo)))
-        ;
-    return result;
-}
-
 int _usem_init(struct _usem *sem, int initial_count, int max_count)
 {
     memset(sem, 0, sizeof(*sem));
     sem->_max_count = max_count;
     sem->_sema_count = initial_count;
+#if !defined(_M_I86)
+    if (NO_ERROR != DosCreateMutexSem(NULL, &sem->_mtx_sem, 0, FALSE)) {
+        return 0;
+    }
+    if (NO_ERROR != DosCreateEventSem(NULL, &sem->_event_sem, 0, FALSE)) {
+        DosCloseMutexSem(sem->_mtx_sem);
+        return 0;
+    }
+#endif
     return 1;
 }
 
 void _usem_destroy(struct _usem *sem)
 {
+#if !defined(_M_I86)
+    DosCloseMutexSem(sem->_mtx_sem);
+    DosCloseEventSem(sem->_event_sem);
+#endif
     memset(sem, 0, sizeof(*sem));
 }
 
 int _usem_acquire(struct _usem *sem)
 {
-    if (_DosSemRequest(&sem->_mtx_sem, -1) != NO_ERROR) {
+    if (acquire_mutex_noint(&sem->_mtx_sem, -1) != NO_ERROR) {
         return 0;
     }
 	while (sem->_sema_count == 0) {
 		sem->_waiters++;
-        DosSemSet(&sem->_event_sem);
-		DosSemClear(&sem->_mtx_sem);
+        reset_event(&sem->_event_sem);
+		release_mutex(&sem->_mtx_sem);
 
-        if (_DosSemWait(&sem->_event_sem, -1) != NO_ERROR) {
+        if (wait_event_noint(&sem->_event_sem, -1) != NO_ERROR) {
             return 0;
         }
 
-        if (_DosSemRequest(&sem->_mtx_sem, -1) != NO_ERROR) {
+        if (acquire_mutex_noint(&sem->_mtx_sem, -1) != NO_ERROR) {
             return 0;
         }
 		sem->_waiters--;
 	}
 	sem->_sema_count--;
-    DosSemClear(&sem->_mtx_sem);
+    release_mutex(&sem->_mtx_sem);
     return 1;
 }
 
 int _usem_release(struct _usem *sem)
 {
-    if (_DosSemRequest(&sem->_mtx_sem, -1) != NO_ERROR) {
+    if (acquire_mutex_noint(&sem->_mtx_sem, -1) != NO_ERROR) {
         return 0;
     }
     sem->_sema_count++;
     if (sem->_waiters > 0) {
-        DosSemClear(&sem->_event_sem);
+        post_event(&sem->_event_sem);
     }
-    DosSemClear(&sem->_mtx_sem);
+    release_mutex(&sem->_mtx_sem);
     return 1;
 }
 
@@ -326,8 +323,7 @@ int __cdecl cnd_init(cnd_t* cond)
 {
     memset(cond, 0, sizeof(*cond));
     cond->_max_waiters = 1;
-    mtx_init(&cond->_mtx, mtx_plain);
-    return thrd_success;
+    return mtx_init(&cond->_mtx, mtx_plain);
 }
 
 void __cdecl cnd_destroy(cnd_t *cond)
@@ -348,7 +344,12 @@ static int _cnd_try_enqueue_wait_item(cnd_t *cond, struct _wait_item *item)
     if ((should_wait = cond->_sema_count < 0)) {
         item->_next = NULL;
         item->_pred = cond->_tail;
-        item->_wait_sema = 0;
+#if defined(_M_I86)
+        item->_wait_event = 0;        
+#else
+        item->_wait_event = THREAD_DATA->thread_event;
+#endif
+        reset_event(&item->_wait_event);
         if (cond->_tail) {            
             cond->_tail->_next = item;
             cond->_tail = item;
@@ -356,8 +357,7 @@ static int _cnd_try_enqueue_wait_item(cnd_t *cond, struct _wait_item *item)
         else {
             cond->_tail = item;
             cond->_head = item;
-        }
-        DosSemSet(&item->_wait_sema);
+        }        
     }
     return should_wait;
 }
@@ -411,7 +411,7 @@ int __cdecl cnd_wait(cnd_t *cond, mtx_t *mtx)
     mtx_unlock(mtx);
 
     if (should_wait) {
-        USHORT wait_result = DosSemWait(&item._wait_sema, -1);
+        APIRET wait_result = wait_event(&item._wait_event, -1);
         switch (wait_result) {
         case NO_ERROR:
         case ERROR_INTERRUPT:
@@ -443,7 +443,7 @@ int __cdecl cnd_signal(cnd_t* cond)
         cond->_sema_count++;
         if (cond->_sema_count <= 0) {
             if ((item = _cnd_dequeue_wait_item(cond))) {
-                DosSemClear(&item->_wait_sema);
+                post_event(&item->_wait_event);
             }
         }
     }
@@ -459,7 +459,7 @@ int __cdecl cnd_broadcast(cnd_t *cond)
     cond->_sema_count = 0;
 
     while ((item = _cnd_dequeue_wait_item(cond))) {
-        DosSemClear(&item->_wait_sema);
+        post_event(&item->_wait_event);
     }
 
     mtx_unlock(&cond->_mtx);

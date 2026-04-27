@@ -75,27 +75,35 @@
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>obj\$(Platform)\$(Configuration)\</IntDir>
     <ClangTidyChecks>-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-clang-analyzer-security.insecureAPI.strcpy</ClangTidyChecks>
+    <IncludePath>C:\WATCOM\h;C:\WATCOM\h\os2</IncludePath>
+    <ExternalIncludePath />
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>obj\$(Platform)\$(Configuration)\</IntDir>
     <ClangTidyChecks>-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-clang-analyzer-security.insecureAPI.strcpy</ClangTidyChecks>
+    <IncludePath>C:\WATCOM\h;C:\WATCOM\h\os2</IncludePath>
+    <ExternalIncludePath />
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>obj\$(Platform)\$(Configuration)\</IntDir>
     <ClangTidyChecks>-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-clang-analyzer-security.insecureAPI.strcpy</ClangTidyChecks>
+    <IncludePath>C:\WATCOM\h;C:\WATCOM\h\os2</IncludePath>
+    <ExternalIncludePath />
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>obj\$(Platform)\$(Configuration)\</IntDir>
     <ClangTidyChecks>-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-clang-analyzer-security.insecureAPI.strcpy</ClangTidyChecks>
+    <IncludePath>C:\WATCOM\h;C:\WATCOM\h\os2</IncludePath>
+    <ExternalIncludePath />
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>__WATCOMC__x=1;_M_IX86x=400;__I86__x=1;__OS2__x=1;__farx=;__pascalx=;__watcallx=;__nearx=;WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>__WATCOMC__=1;_M_IX86=400;__I86__=1;__OS2__=1;__far=;__pascal=;__watcall=;__near=;_Seg16=;_Far16=;_Pascal=;_System=;PASCAL=;_Packed=;_Cdecl=__cdecl;WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>
@@ -113,7 +121,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>__WATCOMC__x=1;_M_IX86x=400;__I86__x=1;__OS2__x=1;__farx=;__pascalx=;__watcallx=;__nearx=;WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>__WATCOMC__=1;_M_IX86=400;__I86__=1;__OS2__=1;__far=;__pascal=;__watcall=;__near=;_Seg16=;_Far16=;_Pascal=;_System=;PASCAL=;_Packed=;_Cdecl=__cdecl;WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>
@@ -131,7 +139,7 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>__WATCOMC__x=1;_M_IX86x=400;__I86__x=1;__OS2__x=1;__farx=;__pascalx=;__watcallx=;__nearx=;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>__WATCOMC__=1;_M_IX86=400;__I86__=1;__OS2__=1;__far=;__pascal=;__watcall=;__near=;_Seg16=;_Far16=;_Pascal=;_System=;PASCAL=;_Packed=;_Cdecl=__cdecl;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>
@@ -149,7 +157,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>__WATCOMC__x=1;_M_IX86x=400;__I86__x=1;__OS2__x=1;__farx=;__pascalx=;__watcallx=;__nearx=;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>__WATCOMC__=1;_M_IX86=400;__I86__=1;__OS2__=1;__far=;__pascal=;__watcall=;__near=;_Seg16=;_Far16=;_Pascal=;_System=;PASCAL=;_Packed=;_Cdecl=__cdecl;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>
@@ -162,6 +170,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\threads\_threads.h" />
     <ClInclude Include="..\..\..\threads\stdatomic.h" />
     <ClInclude Include="..\..\..\threads\threads.h" />
   </ItemGroup>
