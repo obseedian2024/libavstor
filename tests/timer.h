@@ -46,7 +46,16 @@
 typedef struct Timer {
     double              secs;
     int                 flags;
-#if defined(__unix__)
+#if defined(_WIN32)       
+    union {
+        LARGE_INTEGER   pc_start_time;
+        clock_t         start_time;
+    };
+    union {
+        LARGE_INTEGER   pc_end_time;
+        clock_t         end_time;
+    };
+#elif defined(__unix__)
     clockid_t           clock_id;
     union {
         struct timespec     ts_start_time;
@@ -56,15 +65,7 @@ typedef struct Timer {
         struct timespec     ts_end_time;
         clock_t             end_time;
     };
-#elif defined(_WIN32)       
-    union {
-        LARGE_INTEGER   pc_start_time;
-        clock_t         start_time;
-    };
-    union {
-        LARGE_INTEGER   pc_end_time;
-        clock_t         end_time;
-    };
+
 #else
     clock_t             start_time;
     clock_t             end_time;

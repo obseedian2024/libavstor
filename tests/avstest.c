@@ -107,6 +107,9 @@ static const char *AVS_TARGET_ARCH =
 #endif
 "-"
 #if defined(_WIN32)
+#if defined(__CYGWIN__)
+"cygwin-"
+#endif
 "win32"
 #elif defined(__OS2__)
 "os2"
@@ -116,6 +119,10 @@ static const char *AVS_TARGET_ARCH =
 "freebsd"
 #elif defined(__linux__)
 "linux"
+#elif defined(__CYGWIN__)
+"cygwin"
+#elif defined(__unix__)
+"unix"
 #else
 "unknown"
 #endif
