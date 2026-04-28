@@ -1082,7 +1082,7 @@ static int io_open(const char* filename, int oflags)
         CreateFileA(filename,
                     (oflags & AVSTOR_OPEN_READONLY) ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE),
                     (oflags & AVSTOR_OPEN_SHARED) ? FILE_SHARE_READ : 0,
-                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 }
 
 static int io_create(const char* filename, int oflags)
@@ -1090,7 +1090,7 @@ static int io_create(const char* filename, int oflags)
     return (int)(intptr_t)(HANDLE)
         CreateFileA(filename, GENERIC_READ | GENERIC_WRITE,
                     (oflags & AVSTOR_OPEN_SHARED) ? FILE_SHARE_READ : 0,
-                    NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 }
 
 static int io_close(int fid)
