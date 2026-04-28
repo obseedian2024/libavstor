@@ -3,18 +3,34 @@ OBJ_DIR = obj
 BIN_DIR = bin
 
 TEST_SRC_DIR = tests
-TEST_OBJ_DIR = tests/obj
+TEST_OBJ_DIR = $(OBJ_DIR)/$(TEST_SRC_DIR)
+
+OS_NAME = $(shell uname -o)
+
+ifeq ($(OS_NAME), Cygwin)
+	EXE_EXT = .exe
+	LIB_EXT = .lib
+else
+# For mingw
+	ifeq ($(OS_NAME), MS/Windows)
+		EXE_EXT = .exe
+		LIB_EXT = .lib
+	else
+		EXE_EXT =
+		LIB_EXT = .a
+	endif
+endif
 
 LIB_NAME = avstor
-LIB_FILE = $(BIN_DIR)/lib$(LIB_NAME).a
+LIB_FILE = $(BIN_DIR)/lib$(LIB_NAME)$(LIB_EXT)
 LIB_OBJS = $(OBJ_DIR)/avstor.o
 
-AVSCRDB_FILE = $(BIN_DIR)/avscrdb 
+AVSCRDB_FILE = $(BIN_DIR)/avscrdb$(EXE_EXT)
 AVSCRDB_OBJS = $(TEST_OBJ_DIR)/avscrdb.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)/timer.o
 
-AVSTEST_FILE = $(BIN_DIR)/avstest 
+AVSTEST_FILE = $(BIN_DIR)/avstest$(EXE_EXT)
 AVSTEST_OBJS = $(TEST_OBJ_DIR)/avstest.o $(TEST_OBJ_DIR)/avsdb.o $(TEST_OBJ_DIR)/timer.o \
-               $(TEST_OBJ_DIR)/tst*.o
+               $(OBJ_DIR)/$(patsubst %.c,%.o,$(wildcard $(TEST_SRC_DIR)/tst*.c))
 
 AR = ar
 CFLAGS += -I./include -Wall -Wextra -Werror -pedantic
@@ -35,6 +51,7 @@ ifeq ($(DEBUG), 1)
 	CFLAGS += -D_DEBUG -g3
 else
 	CFLAGS += -DNDEBUG -O3 -g0
+	LDFLAGS += -Xlinker -s
 endif
 
 all: $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(LIB_FILE) $(AVSCRDB_FILE) $(AVSTEST_FILE)
@@ -42,7 +59,7 @@ all: $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(LIB_FILE) $(AVSCRDB_FILE) $(AVSTEST
 $(AVSCRDB_FILE): $(LIB_OBJS) $(AVSCRDB_OBJS)
 	$(CC) $(AVSCRDB_OBJS) $(LIB_FILE) $(LDFLAGS) -o $@
 
-$(AVSTEST_FILE): $(LIB_OBJS) $(AVSTEST_OBJS)
+$(AVSTEST_FILE): $(LIB_OBJS) $(AVSTEST_OBJS) $(AVSTEST_TESTS)
 	$(CC) $(AVSTEST_OBJS) $(LIB_FILE) $(LDFLAGS) -o $@
 
 $(OBJ_DIR):

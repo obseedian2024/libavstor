@@ -109,6 +109,8 @@ static const char *AVS_TARGET_ARCH =
 #if defined(_WIN32)
 #if defined(__CYGWIN__)
 "cygwin-"
+#elif defined(__MINGW32__)
+"mingw-"
 #endif
 "win32"
 #elif defined(__OS2__)
