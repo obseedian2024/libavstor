@@ -36,49 +36,46 @@ WVList
 0
 9
 WVList
+1
+10
+ActionStates
+11
+WString
+5
+&Make
+12
+WVList
 0
 -1
 1
 1
 0
-10
+13
 WPickList
 7
-11
+14
 MItem
 3
 *.c
-12
+15
 WString
 4
 COBJ
-13
+16
 WVList
-16
-14
-MCState
 15
-WString
-3
-WCC
-16
-WString
-31
-?????Force enums to be type int
-1
-1
 17
-MRState
+MCState
 18
 WString
 3
 WCC
 19
 WString
-21
-?????Compiler default
+31
+?????Force enums to be type int
 1
-0
+1
 20
 MRState
 21
@@ -195,8 +192,8 @@ WString
 WCC
 49
 WString
-23
-?????Math optimizations
+33
+?????Allow repeated optimizations
 1
 1
 50
@@ -272,7 +269,7 @@ WVList
 67
 WVList
 0
-11
+14
 1
 1
 0
@@ -290,7 +287,7 @@ WVList
 71
 WVList
 0
-11
+14
 1
 1
 0
@@ -308,7 +305,7 @@ WVList
 75
 WVList
 0
-11
+14
 1
 1
 0

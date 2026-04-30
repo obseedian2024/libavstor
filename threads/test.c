@@ -202,10 +202,6 @@ int main(void)
     int i;
     double diff;
 
-#if (!defined(__STDC_VERSION__) || (__STDC_VERSION__ < 201112L))
-    _thrd_initlib();
-#endif
-
     qu = queue_create(QUEUE_SIZE);
 
     mtx_init(&_mtx_queue, mtx_plain);

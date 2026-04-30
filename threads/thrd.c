@@ -31,6 +31,8 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <malloc.h>
+
 #if defined(__OS2__)
 #undef _WIN32
 
@@ -39,7 +41,6 @@
 #define INCL_DOSPROCESS
 #include <os2.h>
 
-#include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,13 +66,46 @@ enum {
     tstate_die          = 16
 };
 
-static once_flag    init_stdthread_flag = ONCE_FLAG_INIT;
+once_flag           __init_stdthread_flag = ONCE_FLAG_INIT;
 static struct _tld  tdata_main;
 
+static signed char  TLSIndexMap[_MAX_TLS_KEY + 1] = { 0 };
+static tss_dtor_t   TLSDestructors[_MAX_TLS_KEY + 1] = { NULL };
+static mtx_t        mtx_tls;
 
+static void *alloc_tls_data(struct _tld* tdata)
+{
+    tdata->tls_data = calloc(_MAX_TLS_KEY + 1, sizeof(void *));
+    if (!tdata->tls_data) {
+        fprintf(stderr, "stdthrd: Failed to allocate TLS storage\n");
+    }
+    return tdata->tls_data;
+}
+
+static void finalize_tls_data(struct _tld* tdata)
+{
+    int i;
+
+    mtx_lock(&mtx_tls);
+    if (tdata->tls_data) {
+        // Call TLS destructors        
+        for (i = 0; i <= _MAX_TLS_KEY; i++) {
+            if (TLSIndexMap[i] && TLSDestructors[i]) {
+                mtx_unlock(&mtx_tls);
+                TLSDestructors[i](tdata->tls_data[i]);
+                mtx_lock(&mtx_tls);
+            }
+        }
+
+        // Free TLS data    
+        free(tdata->tls_data);
+        tdata->tls_data = NULL;
+    }
+    mtx_unlock(&mtx_tls);
+}
 #if defined(_WIN32)
 
-static tss_t key_tld;
+DWORD __key_tld;
 
 struct ThreadParams {
     HANDLE          event_init;
@@ -82,21 +116,24 @@ struct ThreadParams {
     struct _tld     *tdata;
 };
 
-static void init_stdthread(void)
+void __init_stdthread(void)
 {
-    if (tss_create(&key_tld, NULL) != thrd_success) {
-        fprintf(stderr, "FATAL: stdthrd: tss_create failed.\n");
-        abort();
-    }
+    ZeroMemory(&tdata_main, sizeof(tdata_main));
     tdata_main.thr._ThreadID = GetCurrentThreadId();
-
+    
     // Note: this is a pseudo-handle.
-    tdata_main.thr._Handle = GetCurrentThread();
+    tdata_main.thr._Handle = GetCurrentThread();    
 
-    if (tss_set(key_tld, &tdata_main) != thrd_success) {
-        fprintf(stderr, "FATAL: stdthrd: tss_set failed.\n");
+    if (TLS_OUT_OF_INDEXES == (__key_tld = TlsAlloc())) {
+        fprintf(stderr, "FATAL: stdthrd: TlsAlloc failed.\n");
         abort();
     }
+
+    if (!alloc_tls_data(&tdata_main)) {
+        abort();
+    }
+
+    TlsSetValue(__key_tld, &tdata_main);
 }
 
 static
@@ -109,10 +146,17 @@ threadproc(void *arglist)
     thrd_start_t p_func = param->func;
     void *p_arg = param->arg;
 
+    memset(&tdata, 0, sizeof(tdata));
+    if (!alloc_tls_data(&tdata)) {
+        param->thr->_Handle = NULL;
+        SetEvent(param->event_done);
+        _endthread();
+    }
+
     WaitForSingleObject(param->event_init, INFINITE);
 
     tdata.thr = *param->thr;
-    tss_set(key_tld, &tdata);
+    TlsSetValue(__key_tld, &tdata);
 
     SetEvent(param->event_done);
 
@@ -127,7 +171,7 @@ int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *sta
 
     (void)stack_bottom;
 
-    call_once(&init_stdthread_flag, init_stdthread);
+    call_once_init_stdthread;
 
     if (!(param.event_init = CreateEventA(NULL, FALSE, 0, NULL))) {
         return thrd_error;
@@ -148,8 +192,13 @@ int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *sta
     SetEvent(param.event_init);
     WaitForSingleObject(param.event_done, INFINITE);
 
-    *thr = l_thr;
-    result = thrd_success;
+    if (param.thr->_Handle) {
+        *thr = l_thr;
+        result = thrd_success;
+    }
+    else {
+        result = thrd_error;
+    }
 finalize_and_return:
     CloseHandle(param.event_init);
     CloseHandle(param.event_done);
@@ -164,6 +213,8 @@ int __cdecl thrd_equal(thrd_t lhs, thrd_t rhs)
 NORETURN
 void __cdecl thrd_exit(int res)
 {
+    finalize_tls_data(THREAD_DATA);
+    
     _endthreadex((DWORD)res);
 
     // To prevent compiler warning since _endthreadex not marked as noreturn
@@ -221,43 +272,41 @@ void __cdecl thrd_yield(void)
 #endif
 }
 
-int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
-{
-    unsigned key;
-
-    key = TlsAlloc();
-    // TODO: support TLS destructors
-    (void)destructor;
-    if (key == TLS_OUT_OF_INDEXES) {
-        return thrd_error;
-    }
-    tss_key->_key = key;
-    return thrd_success;
-}
-
-int __cdecl tss_delete(tss_t tss_id)
-{
-    return TlsFree(tss_id._key) ? thrd_success : thrd_error;
-}
-
-int __cdecl tss_set(tss_t tss_id, void *val)
-{
-    return TlsSetValue(tss_id._key, val) ? thrd_success : thrd_error;
-}
-
-void* __cdecl tss_get(tss_t tss_key)
-{
-    void *result = TlsGetValue(tss_key._key);
-    if (!result && GetLastError() != ERROR_SUCCESS) {
-        fprintf(stderr, "stdthrd: TlsGetValue failed.\n");
-    }
-    return result;
-}
+//int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
+//{
+//    unsigned key;
+//
+//    key = TlsAlloc();
+//    // TODO: support TLS destructors
+//    (void)destructor;
+//    if (key == TLS_OUT_OF_INDEXES) {
+//        return thrd_error;
+//    }
+//    tss_key->_key = key;
+//    return thrd_success;
+//}
+//
+//int __cdecl tss_delete(tss_t tss_id)
+//{
+//    return TlsFree(tss_id._key) ? thrd_success : thrd_error;
+//}
+//
+//int __cdecl tss_set(tss_t tss_id, void *val)
+//{
+//    return TlsSetValue(tss_id._key, val) ? thrd_success : thrd_error;
+//}
+//
+//void* __cdecl tss_get(tss_t tss_key)
+//{
+//    void *result = TlsGetValue(tss_key._key);
+//    if (!result && GetLastError() != ERROR_SUCCESS) {
+//        fprintf(stderr, "stdthrd: TlsGetValue failed.\n");
+//    }
+//    return result;
+//}
 
 
 #elif defined(__OS2__)
-
-#define MAX_TLS_KEY 255
 
 extern unsigned     __MaxThreads;
 #if defined(_M_I86)
@@ -275,10 +324,6 @@ static mtx_t        mtx_detach;
 static cnd_t        cnd_detach;
 static thrd_t       detach_thread;
 static struct _tld  *thread_data_list = NULL;
-
-static signed char  TLSIndexMap[256] = { 0 };
-static tss_dtor_t   TLSDestructors[256] = { NULL };
-static mtx_t        mtx_tls;
 
 #if defined(_M_I86)
 static void         *ThrdStack;
@@ -301,7 +346,10 @@ static int is_thrd_valid(thrd_t thr)
     }
 #else
     TID thr_id = (TID)thr._thr_id;
-    if (NO_ERROR != DosWaitThread(&thr_id, DCWW_NOWAIT)) {
+    APIRET res;
+    while (ERROR_INTERRUPT == (res = DosWaitThread(&thr_id, DCWW_NOWAIT)))
+        ;
+    if (res == ERROR_INVALID_THREADID) {
         return 0;
     }
 #endif
@@ -382,7 +430,8 @@ static VOID APIENTRY done_stdthread(ULONG termCode)
     mtx_destroy(&tdata_main.mtx_exit);
     mtx_destroy(&tdata_main.mtx_joined);
 
-    free(tdata_main.tls_data);
+    //free(tdata_main.tls_data);
+    finalize_tls_data(&tdata_main);
 #if defined(_M_I86)
     free(detach_thread_stack);
 #else
@@ -396,7 +445,7 @@ static VOID APIENTRY done_stdthread(ULONG termCode)
     DosExitList(EXLST_EXIT, NULL);
 }
 
-static void init_stdthread(void)
+void __init_stdthread(void)
 {
 #if !defined(_M_I86)
     if (NO_ERROR != DosCreateMutexSem(NULL, &ThrdSem, 0, TRUE)) {
@@ -418,9 +467,7 @@ static void init_stdthread(void)
 
     memset(&tdata_main, 0, sizeof(tdata_main));
 
-    tdata_main.tls_data = calloc(MAX_TLS_KEY + 1, sizeof(void*));
-    if (!tdata_main.tls_data) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to allocate TLS storage\n");
+    if (!alloc_tls_data(&tdata_main)) {
         abort();
     }
 
@@ -483,10 +530,8 @@ threadproc(void *arglist)
     thrd_start_t p_func = ThrdFunc;
 
     memset(&tdata, 0, sizeof(tdata));
-    tdata.tls_data = calloc(MAX_TLS_KEY + 1, sizeof(void*));
-    if (!tdata.tls_data) {
+    if (!alloc_tls_data(&tdata)) {
         Thrd._thr_id = -1;
-        fprintf(stderr, "stdthrd: Failed to allocate TLS storage\n");
         post_event(&ThrdInitSem);
         _endthread();
     }
@@ -526,7 +571,7 @@ int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *sta
     void *l_stack;
     int result, create_result;
 
-    call_once(&init_stdthread_flag, init_stdthread);
+    call_once_init_stdthread;
 
     acquire_mutex_noint(&ThrdSem, -1);
 
@@ -591,26 +636,8 @@ __declspec(noreturn)
 void __cdecl thrd_exit(int res)
 {
     struct _tld *tdata = THREAD_DATA;
-    unsigned i;
 
-    tdata->exit_code = res;
-
-    // Call TLS destructors
-    mtx_lock(&mtx_tls);
-    for (i = 0; i <= MAX_TLS_KEY; i++) {
-        if (TLSIndexMap[i] && TLSDestructors[i]) {
-            mtx_unlock(&mtx_tls);
-            TLSDestructors[i](tdata->tls_data[i]);
-            mtx_lock(&mtx_tls);
-        }
-    }
-
-    // Free TLS data
-    if (tdata->tls_data) {
-        free(tdata->tls_data);
-        tdata->tls_data = NULL;
-    }
-    mtx_unlock(&mtx_tls);
+    tdata->exit_code = res;    
 
     // signal thread_join that the thread has exited and the exit_code can be picked up
     mtx_lock(&tdata->mtx_exit);
@@ -646,6 +673,8 @@ void __cdecl thrd_exit(int res)
     cnd_destroy(&tdata->cnd_joined);
     mtx_destroy(&tdata->mtx_exit);
     mtx_destroy(&tdata->mtx_joined);
+
+    finalize_tls_data(tdata);
 
 #if !defined(_M_I86)
     DosCloseEventSem(tdata->thread_event);
@@ -743,14 +772,17 @@ void __cdecl thrd_yield(void)
     _cpu_pause();
 }
 
+#endif
+
 int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
 {
     unsigned i;
     int result = thrd_error;
 
-    call_once(&init_stdthread_flag, init_stdthread);
+    call_once_init_stdthread;
+
     mtx_lock(&mtx_tls);
-    for (i = 0; i <= MAX_TLS_KEY; i++) {
+    for (i = 0; i <= _MAX_TLS_KEY; i++) {
         if (!TLSIndexMap[i]) {
             TLSIndexMap[i] = -1;
             tss_key->_key = i;
@@ -760,14 +792,16 @@ int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
         }
     }
     mtx_unlock(&mtx_tls);
+
     return result;
 }
 
 int __cdecl tss_delete(tss_t tss_id)
 {
-    if (tss_id._key > MAX_TLS_KEY) {
+    if (tss_id._key > _MAX_TLS_KEY) {
         return thrd_error;
     }
+
     mtx_lock(&mtx_tls);
     if (TLSIndexMap[tss_id._key] == 0) {
         mtx_unlock(&mtx_tls);
@@ -776,27 +810,26 @@ int __cdecl tss_delete(tss_t tss_id)
     TLSIndexMap[tss_id._key] = 0;
     TLSDestructors[tss_id._key] = NULL;
     mtx_unlock(&mtx_tls);
+
     return thrd_success;
 }
 
 int __cdecl tss_set(tss_t tss_id, void *val)
 {
-    if (tss_id._key > MAX_TLS_KEY) {
+    if (tss_id._key > _MAX_TLS_KEY) {
         return thrd_error;
     }
     THREAD_DATA->tls_data[tss_id._key] = val;
     return thrd_success;
 }
 
-void __cdecl *tss_get(tss_t tss_key)
+void* __cdecl tss_get(tss_t tss_key)
 {
-    if (tss_key._key > MAX_TLS_KEY || !TLSIndexMap[tss_key._key]) {
+    if (tss_key._key > _MAX_TLS_KEY || !TLSIndexMap[tss_key._key]) {
         return NULL;
     }
     return THREAD_DATA->tls_data[tss_key._key];
 }
-
-#endif
 
 int __cdecl thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
 {
@@ -810,15 +843,10 @@ thrd_t __cdecl thrd_current(void)
 
 void __cdecl call_once(once_flag *_flag, void(*_func)(void))
 {
-    if (!_locked_load(_flag)) {
-        if (!(_locked_exchange(_flag, 1)))
-        {
-            _func();
-        }
-    }
+    __call_once(_flag, _func);    
 }
 
-void __cdecl _thrd_initlib(void)
-{
-    call_once(&init_stdthread_flag, init_stdthread);
-}
+//void __cdecl _thrd_initlib(void)
+//{
+//    call_once_init_stdthread;
+//}

@@ -186,6 +186,9 @@ static int __inline _cnd_release_sema(cnd_t *cond)
 int __cdecl cnd_init(cnd_t* cond)
 {
     WaiterState st;
+
+    call_once_init_stdthread;
+
     st.s.max_waiters = 1;
     st.s.sema = 0;
 
@@ -212,7 +215,7 @@ int __cdecl cnd_wait(cnd_t* cond, mtx_t* mtx)
 
     if (should_wait) {
         DWORD wait_result = WaitForSingleObjectEx(cond->_ksem, INFINITE, TRUE);
-
+        
         // If the wait is not satisified, we need to release the condvar semaphore
         if (wait_result != WAIT_OBJECT_0) {
             _cnd_release_sema(cond);
@@ -321,6 +324,8 @@ int _usem_release(struct _usem *sem)
 
 int __cdecl cnd_init(cnd_t* cond)
 {
+    call_once_init_stdthread;
+
     memset(cond, 0, sizeof(*cond));
     cond->_max_waiters = 1;
     return mtx_init(&cond->_mtx, mtx_plain);
@@ -470,6 +475,8 @@ int __cdecl cnd_broadcast(cnd_t *cond)
 
 int __cdecl mtx_init(mtx_t* mtx, int type)
 {
+    call_once_init_stdthread;
+
     if (type & mtx_recursive) {
         fprintf(stderr, "FATAL: stdthrd: Recursive mutexes are not currently supported.\n");
         abort();

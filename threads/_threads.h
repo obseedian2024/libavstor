@@ -41,6 +41,7 @@ typedef USHORT APIRET;
 
 struct _tld {
     thrd_t          thr;
+    void*           *tls_data;
 #if defined(__OS2__)
     struct _tld     *next_detach;
     cnd_t           cnd_exited;
@@ -53,10 +54,24 @@ struct _tld {
     HEV             thread_event;
 #endif
     int             exit_code;
-    int             thread_state;
-    void            **tls_data;
+    int             thread_state;    
 #endif
 };
+
+extern once_flag    __init_stdthread_flag;
+extern void         __init_stdthread(void);
+
+static __inline void __call_once(once_flag *_flag, void(*_func)(void))
+{
+    if (!_locked_load(_flag)) {
+        if (!(_locked_exchange(_flag, 1)))
+        {
+            _func();
+        }
+    }
+}
+
+#define call_once_init_stdthread __call_once(&__init_stdthread_flag, __init_stdthread)
 
 #if defined(__OS2__)
 
@@ -126,6 +141,8 @@ static APIRET __inline acquire_mutex_noint(PHMTX sem, long timo)
 
 #else
 
-#define THREAD_DATA  ((struct _tld *)tss_get(key_tld))
+extern DWORD __key_tld;
+
+#define THREAD_DATA  ((struct _tld *)TlsGetValue(__key_tld))
 
 #endif
