@@ -37,6 +37,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <avstor.h>
+
 #if defined(_WIN32)
 #include <Windows.h>
 
@@ -393,6 +395,8 @@ int main(void)
            "Copyright (c) 2025 Tamas Fejerpataky\n"
            "See project at https://github.com/obseedian2024/libavstor\n");
     printf("Target: %s%s%s\n\n", vtCYN, AVS_TARGET_ARCH, vtCRESET);
+
+    avstor_thread_attach();
 
     result = run_all_tests(ALL_TESTS, &duration);
 

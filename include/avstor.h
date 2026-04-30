@@ -207,6 +207,8 @@ const char *AVCALL avstor_errtostr(int err_code);
 
 int AVCALL avs_check_cache_consistency(avstor *db);
 
+int AVCALL avstor_thread_attach(void);
+
 #ifdef __cplusplus
 }
 #endif

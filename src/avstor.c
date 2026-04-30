@@ -86,6 +86,11 @@
 
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
 
+// Force C11 TLS function usage on compiler/platform combos where __thread doesn't work
+#if (defined(__WATCOMC__) && defined(__OS2__)) || (defined(__GNUC__) && defined(__CYGWIN__))
+#define USE_STDTHRD_TLS 1
+#endif
+
 #if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >=201112L))
 
 // Use C11 atomics and synchronization primitives if available
@@ -142,6 +147,7 @@
 #define offsetof(t, d)          ((size_t)&((t*)(0))->d)
 #endif
 
+#if !defined(USE_STDTHRD_TLS)
 #if (defined(_WIN32) && !defined(_WINDLL)) || defined(__unix__)
 #if defined(__WATCOMC__) || defined(_MSC_VER)
 #define THREAD_LOCAL __declspec(thread)
@@ -157,7 +163,9 @@
 #define THREAD_LOCAL
 #error "Define THREAD_LOCAL for platform"
 #endif
-
+#else
+#define THREAD_LOCAL
+#endif
 // Workaround for IntelliSense Clang bug (https://github.com/microsoft/vscode-cpptools/issues/11585)
 //#if defined(__clang__) && defined(_WIN32) && defined(UINT32_MAX)
 //#undef UINT32_MAX
@@ -288,14 +296,14 @@ typedef struct ExceptionFrame
     int                     line_no;
 } ExceptionFrame;
 
-#if defined(_WINDLL) || defined(__OS2__)
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+
+#if defined(_WINDLL) || defined(USE_STDTHRD_TLS)
 typedef struct AvTLSData {
     ExceptionFrame          *tls_cur_ex;
     const char              *tls_last_err_msg;
 } AvTLSData;
 #endif
-
-#if defined(AVSTOR_CONFIG_THREAD_SAFE)
 
 typedef struct AvMutex {
 #if defined(USE_WIN32_CNDVAR)
@@ -587,7 +595,7 @@ static DWORD tls_idx;
 #define cur_ex              ((AvTLSData*)TlsGetValue(tls_idx))->tls_cur_ex
 #define last_err_msg        ((AvTLSData*)TlsGetValue(tls_idx))->tls_last_err_msg
 
-#elif defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE)
+#elif defined(USE_STDTHRD_TLS)
 // thread locals don't work under OS/2 and Watcom
 static tss_t tls_idx;
 
@@ -604,7 +612,7 @@ THREAD_LOCAL
 const char* last_err_msg = NULL;
 #endif
 
-#if defined(_WINDLL) || (defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE))
+#if defined(_WINDLL) || defined(USE_STDTHRD_TLS)
 static void init_tls_vars(void)
 {
     cur_ex = NULL;
@@ -3295,7 +3303,7 @@ static void AVCALL db_create_file(avstor *db, const char* filename, int oflags)
     }
 }
 
-#if defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE)
+#if defined(USE_STDTHRD_TLS)
 
 once_flag init_tls_flag = ONCE_FLAG_INIT;
 
@@ -3308,14 +3316,18 @@ static void avstor_destroy_tls(void* tls_data)
 
 static void avstor_init_tls(void)
 {
-    AvTLSData *ptr;
-
-    _thrd_initlib();
-
     if (tss_create(&tls_idx, avstor_destroy_tls) != thrd_success) {
         fprintf(stderr, "libavstor: FATAL: Failed to initialize TLS index\n");
         abort();
     }
+}
+
+int AVCALL avstor_thread_attach(void)
+{
+    AvTLSData *ptr;
+
+    call_once(&init_tls_flag, avstor_init_tls);
+
     if (!(ptr = malloc(sizeof(*ptr)))) {
         tss_delete(tls_idx);
         fprintf(stderr, "libavstor: FATAL: Failed to allocate TLS storage\n");
@@ -3323,17 +3335,22 @@ static void avstor_init_tls(void)
     }
     tss_set(tls_idx, ptr);
     init_tls_vars();
+    return AVSTOR_OK;
 }
+
+#else
+
+int AVCALL avstor_thread_attach(void) 
+{
+    return AVSTOR_OK;
+}
+
 #endif
 
 int AVCALL avstor_open(avstor **pdb, const char* filename, unsigned szcache, int oflags)
 {
     avstor *db;
     int result;
-
-#if defined(__OS2__) && defined(AVSTOR_CONFIG_THREAD_SAFE)
-    call_once(&init_tls_flag, avstor_init_tls);
-#endif
 
     CHECK_PARAM(pdb && filename);
     if (((oflags & AVSTOR_OPEN_CREATE) && (oflags & AVSTOR_OPEN_READONLY))

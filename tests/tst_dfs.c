@@ -42,6 +42,12 @@
 #define TEST_DB "test.db"
 #define LEVEL_COUNT 3
 
+#if defined(__x86_64__) || defined(_M_AMD64)
+#define AVS_THREADPROC_CALL
+#else
+#define AVS_THREADPROC_CALL __cdecl
+#endif
+
 struct dfs_create_db_param {
     const char        *filename;
     unsigned    cache_size;
@@ -53,6 +59,7 @@ struct dfs_traversal_param {
     const char  *filename;
     unsigned    cache_size;
     int         max_levels;
+    int         thread_count;
 };
 
 long actual_node_total;
@@ -298,16 +305,115 @@ static int dfs_traversal_st(void *param, int64_t *out_node_total, int64_t *out_b
     return result;
 }
 
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+
+#if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >=201112L))
+#include <threads.h>
+#else
+#include "../threads/threads.h"
+#endif
+
+struct dfs_thread_param {
+    thrd_t thr;
+    avstor *db;
+    struct dfs_traversal_param *param;
+    int64_t actual_sum_values;
+};
+
+static int AVS_THREADPROC_CALL 
+dfs_thread_func_mt(void *param)
+{
+    struct dfs_thread_param *p = (struct dfs_thread_param*)param;
+    avstor_node parent;
+    int result;
+
+    avstor_thread_attach();
+
+    avstor_node_init(p->db, &parent);
+    result = dfs_traversal_proc(p->db, &parent, p->param, &p->actual_sum_values);
+
+    return result;
+}
+
+static int dfs_traversal_mt(void *param, int64_t *out_node_total, int64_t *out_bytes_total)
+{
+    struct dfs_traversal_param* p = (struct dfs_traversal_param*)param;
+    struct dfs_thread_param *threads;
+    avstor *db;
+    int res, result, t;
+    
+    /* node values are sequential starting at zero, so their sum
+       can be calculated by the known formula n(n-1)/2 */
+    int64_t expected_sum_values = (int64_t)actual_node_total * ((int64_t)actual_node_total - 1) / 2;
+
+    result = 1;
+    *out_node_total = 0;
+    *out_bytes_total = 0;
+
+    printf("...Running test with %i threads.\n", p->thread_count);
+
+    threads = calloc(p->thread_count, sizeof(struct dfs_thread_param));
+    if (!threads) {
+        printf("%sERROR: calloc failed%s\n", vtYEL, vtCRESET);
+        return 0;
+    }
+
+    /* open database file created in previous test */
+    if (AVSTOR_OK != (res = avstor_open(&db, p->filename, p->cache_size, AVSTOR_OPEN_READONLY))) {
+        avstest_print_err("avstor_open", res);
+        free(threads);
+        return 0;
+    }
+
+    for (t = 0; t < p->thread_count; ++t) {
+        threads[t].db = db;
+        threads[t].param = p;
+        threads[t].actual_sum_values = 0;
+        if (thrd_success != (res = thrd_create(&threads[t].thr, dfs_thread_func_mt, &threads[t])))
+        {
+            printf("%sERROR: thrd_create failed with %i%s\n", vtYEL, res, vtCRESET);
+            abort();
+        }
+    }
+
+    for (t = 0; t < p->thread_count; ++t) {
+        int thrd_result;
+        if (thrd_success != (res = thrd_join(threads[t].thr, &thrd_result))) {
+            result = 0;
+            printf("%sERROR: thrd_join on thread %i failed with %i%s\n", vtYEL, t, res, vtCRESET);
+        }
+        else if (!thrd_result) {
+            result = 0;
+            printf("%sERROR: thread %i exited with %i%s\n", vtYEL, t, thrd_result, vtCRESET);
+        }
+        else if (expected_sum_values != threads[t].actual_sum_values) {
+            printf("%sERROR: thread %i: Unexpected sum of node values%s\n", vtYEL, t, vtCRESET);
+            result = 0;
+        }
+    }
+    free(threads);
+    avstor_close(db);
+    return result;
+}
+
+static const struct dfs_traversal_param
+DFS_TRAVERSAL_MT = { TEST_DB, 4096, LEVEL_COUNT, 4 };
+
+#endif
+
 static const long NODECOUNT_LIST[LEVEL_COUNT] = { 100, 100, 100 };
 static const struct dfs_create_db_param
 DFS_CREATE_DB_PARAM = { TEST_DB, 4096, LEVEL_COUNT, (long*)&NODECOUNT_LIST };
 
 static const struct dfs_traversal_param
-DFS_TRAVERSAL_ST = { TEST_DB, 4096, LEVEL_COUNT };
+DFS_TRAVERSAL_ST = { TEST_DB, 4096, LEVEL_COUNT, 1 };
 
 DEFINE_TEST_LIST(DFS) {
     { "Create DB for DFS", dfs_create_db, 0, (void*)&DFS_CREATE_DB_PARAM },
     { "DFS Traversal (Single Threaded)", dfs_traversal_st, 0, (void*)&DFS_TRAVERSAL_ST }
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+    ,{ "DFS Traversal (Multi Threaded)", dfs_traversal_mt, 0, (void*)&DFS_TRAVERSAL_MT }
+#endif
 };
 
 DEFINE_TESTS(DFS);
