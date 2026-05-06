@@ -150,18 +150,19 @@ int __cdecl _usem_release(struct _usem *sem)
 //
 static int __inline _cnd_acquire_sema(cnd_t *cond)
 {
-    WaiterState cur; 
+    WaiterState cur;
     WaiterState next;
-    cur.state = atomic_load(&cond->_state);
-    do {
-        next = cur;
-        next.s.sema--;
-        if (-next.s.sema > next.s.max_waiters) {
-            next.s.max_waiters = -next.s.sema;
-        }
-    } while (!atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state));
 
-    return next.s.sema < 0;
+    cur.state = atomic_load(&cond->_state);
+    next.s.max_waiters = cur.s.max_waiters;
+    next.s.sema = cur.s.sema - 1;
+    if (-next.s.sema > next.s.max_waiters) {
+        next.s.max_waiters = -next.s.sema;
+    }
+    if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
+        return next.s.sema < 0;
+    }
+    return 0;
 }
 
 //
@@ -173,12 +174,15 @@ static int __inline _cnd_release_sema(cnd_t *cond)
     WaiterState cur;
     WaiterState next;
     cur.state = atomic_load(&cond->_state);
-    while (cur.s.sema < cur.s.max_waiters) {
-        next = cur;
-        next.s.sema++;
-        if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
-            return cur.s.sema < 0;
+    if (cur.s.sema < cur.s.max_waiters) {
+        next.s.max_waiters = cur.s.max_waiters;
+        next.s.sema = cur.s.sema + 1;
+        while (!atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state) && cur.s.sema < cur.s.max_waiters) {
+            next.s.max_waiters = cur.s.max_waiters;
+            next.s.sema = cur.s.sema + 1;
+            _cpu_pause();
         }
+        return cur.s.sema < 0;
     }
     return 0;
 }
@@ -244,15 +248,15 @@ int __cdecl cnd_broadcast(cnd_t* cond)
     WaiterState cur;
     WaiterState next;
     cur.state = atomic_load(&cond->_state);
-    while (cur.s.sema < cur.s.max_waiters) {
-        next = cur;
-        next.s.sema = next.s.max_waiters;
-        if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
-            if (cur.s.sema < 0) {
-                return ReleaseSemaphore(cond->_ksem, -cur.s.sema, NULL) ? thrd_success : thrd_error;
-            }
-            break;
-        }
+    next.s.max_waiters = cur.s.max_waiters;
+    next.s.sema = cur.s.max_waiters;
+    while (!atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
+        next.s.max_waiters = cur.s.max_waiters;
+        next.s.sema = cur.s.max_waiters;
+        _cpu_pause();
+    }
+    if (cur.s.sema < 0) {
+        return ReleaseSemaphore(cond->_ksem, -cur.s.sema, NULL) ? thrd_success : thrd_error;
     }
     return thrd_success;
 }
