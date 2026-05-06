@@ -55,28 +55,14 @@ typedef struct atomic_int {
     int     _value;
 } atomic_int;
 
-#if defined(__WATCOMC__)
-
-extern void _cpu_pause(void);
-#pragma aux _cpu_pause = \
-    "db 0xf3, 0x90"
-
-#elif defined(_MSC_VER)
-
 #if defined(_M_IX86)
-static __inline void _cpu_pause(void)
-{
-    __asm {
-        _emit 0xf3
-        _emit 0x90
-    }
-}
+
+#define _cpu_pause() __asm _emit 0xf3 __asm _emit 0x90
+
 #else
 
-static __inline void _cpu_pause(void)
-{ }
+#define _cpu_pause() (void)0
 
-#endif
 #endif
 
 #if defined(__i386__)
@@ -253,7 +239,7 @@ __locked_bit_test_and_set(volatile atomic_int *obj, unsigned num)
     }
 }
 
-static __inline signed char __cdecl 
+static __inline signed char __cdecl
 __locked_bit_test_and_clear(volatile atomic_int *obj, unsigned num)
 {
     _asm {
