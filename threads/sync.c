@@ -89,7 +89,7 @@ int __cdecl _usem_init(struct _usem *sem, int initial_count, int max_count)
     sem->_max_count = max_count;
     sem->_sema_count = initial_count;
     InitializeCriticalSection(&sem->_cs);
-    sem->_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    sem->_event = CreateEventA(NULL, TRUE, FALSE, NULL);
     if (!sem->_event) {
         DeleteCriticalSection(&sem->_cs);
         return 0;
@@ -114,7 +114,7 @@ int __cdecl _usem_acquire(struct _usem *sem)
     EnterCriticalSection(&sem->_cs);
     while (sem->_sema_count == 0) {
         DWORD wait_result;
-        sem->_waiters++;
+
         LeaveCriticalSection(&sem->_cs);
 
         while ((wait_result = WaitForSingleObjectEx(sem->_event, INFINITE, TRUE)) == WAIT_IO_COMPLETION)
@@ -124,9 +124,11 @@ int __cdecl _usem_acquire(struct _usem *sem)
         }
 
         EnterCriticalSection(&sem->_cs);
-        sem->_waiters--;
     }
     sem->_sema_count--;
+    if (sem->_sema_count == 0) {
+		ResetEvent(sem->_event);
+	}
     LeaveCriticalSection(&sem->_cs);
     return result;
 }
@@ -134,12 +136,14 @@ int __cdecl _usem_acquire(struct _usem *sem)
 int __cdecl _usem_release(struct _usem *sem)
 {
     EnterCriticalSection(&sem->_cs);
-    sem->_sema_count++;
-    if (sem->_waiters > 0) {
-        if (!SetEvent(sem->_event)) {
-            LeaveCriticalSection(&sem->_cs);
-            return 0;
+    if (sem->_sema_count < sem->_max_count) {
+        if (sem->_sema_count == 0) {
+            if (!SetEvent(sem->_event)) {
+                LeaveCriticalSection(&sem->_cs);
+                return 0;
+            }
         }
+        sem->_sema_count++;
     }
     LeaveCriticalSection(&sem->_cs);
     return 1;
@@ -521,15 +525,14 @@ int __cdecl mtx_unlock(mtx_t* mtx)
     if (atomic_exchange(&mtx->_lock, 0)) {
         int cur = atomic_load(&mtx->_count);
 
-        // This has to be a <= comparison, not < as it might be expected.
-        // Otherwise, deadlocks can occur.
-        while (cur <= 0) {
-            if (atomic_compare_exchange_strong(&mtx->_count, &cur, cur + 1)) {
-                if (cur < 0 && !_usem_release(&mtx->_wait_sem)) {
-                    return thrd_error;
-                }
-                break;
-            }
+        // Update _count up to a maximum of one
+        while (!atomic_compare_exchange_weak(&mtx->_count, &cur, cur <= 0 ? cur + 1 : 1))
+        {
+            _cpu_pause();
+        }
+
+        if (cur < 0 && !_usem_release(&mtx->_wait_sem)) {
+            return thrd_error;
         }
         return thrd_success;
 	}

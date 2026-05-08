@@ -103,10 +103,10 @@ typedef struct _usem {
     HEV     _event_sem;
     HMTX    _mtx_sem;
 #endif
+    int _waiters;
 #endif
     int _max_count;
-    int _sema_count;
-	int _waiters;
+    int _sema_count;	
 } _usem;
 
 typedef struct mtx {    
