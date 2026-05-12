@@ -48,7 +48,7 @@ struct _tld {
     cnd_t           cnd_joined;
     mtx_t           mtx_exit;
     mtx_t           mtx_joined;
-#if defined(_M_I86)   
+#if defined(_M_I86)
     void            *dyn_stack;
 #else
     HEV             thread_event;
@@ -61,17 +61,7 @@ struct _tld {
 extern once_flag    __init_stdthread_flag;
 extern void         __init_stdthread(void);
 
-static __inline void __call_once(once_flag *_flag, void(*_func)(void))
-{
-    if (!_locked_load(_flag)) {
-        if (!(_locked_exchange(_flag, 1)))
-        {
-            _func();
-        }
-    }
-}
-
-#define call_once_init_stdthread __call_once(&__init_stdthread_flag, __init_stdthread)
+#define call_once_init_stdthread() call_once(&__init_stdthread_flag, __init_stdthread)
 
 #if defined(__OS2__)
 

@@ -191,11 +191,9 @@ static int __inline _cnd_release_sema(cnd_t *cond)
     return 0;
 }
 
-int __cdecl cnd_init(cnd_t* cond)
+int __cdecl _cnd_init(cnd_t* cond)
 {
     WaiterState st;
-
-    call_once_init_stdthread;
 
     st.s.max_waiters = 1;
     st.s.sema = 0;
@@ -330,13 +328,13 @@ int _usem_release(struct _usem *sem)
     return 1;
 }
 
-int __cdecl cnd_init(cnd_t* cond)
-{
-    call_once_init_stdthread;
+int __cdecl _mtx_init(mtx_t *mtx, int type);
 
+int __cdecl _cnd_init(cnd_t* cond)
+{
     memset(cond, 0, sizeof(*cond));
     cond->_max_waiters = 1;
-    return mtx_init(&cond->_mtx, mtx_plain);
+    return _mtx_init(&cond->_mtx, mtx_plain);
 }
 
 void __cdecl cnd_destroy(cnd_t *cond)
@@ -481,10 +479,14 @@ int __cdecl cnd_broadcast(cnd_t *cond)
 
 #endif
 
-int __cdecl mtx_init(mtx_t* mtx, int type)
+int __cdecl cnd_init(cnd_t *cond)
 {
-    call_once_init_stdthread;
+    call_once_init_stdthread();
+    return _cnd_init(cond);
+}
 
+int __cdecl _mtx_init(mtx_t* mtx, int type)
+{
     if (type & mtx_recursive) {
         fprintf(stderr, "FATAL: stdthrd: Recursive mutexes are not currently supported.\n");
         abort();
@@ -493,6 +495,12 @@ int __cdecl mtx_init(mtx_t* mtx, int type)
     _locked_store(&mtx->_lock, 0);
     _locked_store(&mtx->_count, 0);
     return _usem_init(&mtx->_wait_sem, 0, _MAX_SEM) ? thrd_success : thrd_error;
+}
+
+int __cdecl mtx_init(mtx_t *mtx, int type)
+{
+    call_once_init_stdthread();
+    return _mtx_init(mtx, type);
 }
 
 void __cdecl mtx_destroy(mtx_t* mtx)
