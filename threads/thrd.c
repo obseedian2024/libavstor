@@ -41,7 +41,6 @@
 #define INCL_DOSPROCESS
 #include <os2.h>
 
-#include <stdlib.h>
 #include <string.h>
 
 #elif defined(_WIN32)
@@ -53,6 +52,7 @@
 
 #include <process.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "stdatomic.h"
 #include "_threads.h"
@@ -106,6 +106,7 @@ static void finalize_tls_data(struct _tld* tdata)
     }
     mtx_unlock(&mtx_tls);
 }
+
 #if defined(_WIN32)
 
 DWORD __key_tld;
@@ -119,6 +120,16 @@ struct ThreadParams {
     struct _tld     *tdata;
 };
 
+typedef int *pint;
+typedef void *pvoid;
+
+static void __cdecl done_stdthread(void)
+{
+    finalize_tls_data(&tdata_main);
+    mtx_destroy(&mtx_tls);
+    TlsFree(__key_tld);
+}
+
 void __init_stdthread(void)
 {
     ZeroMemory(&tdata_main, sizeof(tdata_main));
@@ -126,6 +137,8 @@ void __init_stdthread(void)
     
     // Note: this is a pseudo-handle.
     tdata_main.thr._Handle = GetCurrentThread();    
+
+    _mtx_init(&mtx_tls, mtx_plain);
 
     if (TLS_OUT_OF_INDEXES == (__key_tld = TlsAlloc())) {
         fprintf(stderr, "FATAL: stdthrd: TlsAlloc failed.\n");
@@ -137,6 +150,11 @@ void __init_stdthread(void)
     }
 
     TlsSetValue(__key_tld, &tdata_main);
+
+    if (atexit(done_stdthread)) {
+        fprintf(stderr, "FATAL: stdthrd: atexit failed.\n");
+        abort();
+    }
 }
 
 static
@@ -162,8 +180,7 @@ threadproc(void *arglist)
     TlsSetValue(__key_tld, &tdata);
 
     SetEvent(param->event_done);
-
-    return (unsigned)p_func(p_arg);
+    thrd_exit(p_func(p_arg));
 }
 
 int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
@@ -417,14 +434,8 @@ static int __cdecl detach_thrdproc(void *arg)
     }
 }
 
-#if defined(_M_I86)
-static void PASCAL FAR done_stdthread(USHORT termCode)
-#else
-static VOID APIENTRY done_stdthread(ULONG termCode)
-#endif
+static void done_stdthread(void)
 {
-    (void)termCode;
-
     mtx_destroy(&mtx_detach);
     cnd_destroy(&cnd_detach);
 
@@ -445,7 +456,6 @@ static VOID APIENTRY done_stdthread(ULONG termCode)
     _nfree(ThrdData);
 
     mtx_destroy(&mtx_tls);
-    DosExitList(EXLST_EXIT, NULL);
 }
 
 static
@@ -624,7 +634,10 @@ void __init_stdthread(void)
         abort();
     }
 
-    DosExitList(EXLST_ADD, done_stdthread);
+    if (atexit(done_stdthread)) {
+        fprintf(stderr, "FATAL: stdthrd: atexit failed.\n");
+        abort();
+    }
 }
 
 int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
