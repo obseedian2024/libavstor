@@ -35,14 +35,44 @@
 // These are private declarations used by the modules that don't
 // need to be in threads.h
 
+#if defined(__OS2__)
+
+#undef _WIN32
+#if !defined(OS2_INCLUDED)
+
+#define INCL_DOS
+#define INCL_DOSERRORS
+#define INCL_DOSPROCESS
+#include <os2.h>
+
+#endif
+#elif defined(_WIN32)
+
+#include <Windows.h>
+#endif
+
 #if defined(_M_I86)
 typedef USHORT APIRET;
 #endif
 
+struct _mcs_node {
+	atomic_int      locked;
+	atomic_ptr      next;
+#if defined(_WIN32)
+    void            **event;
+#elif defined(__OS2__)
+    unsigned long   *event;
+#endif
+};
+
 struct _tld {
     thrd_t          thr;
     void*           *tls_data;
-#if defined(__OS2__)
+    struct _mcs_node sem_lock;
+#if defined(_WIN32)
+    void            *thread_event;
+#elif defined(__OS2__)
+    unsigned long   thread_event;
     struct _tld     *next_detach;
     cnd_t           cnd_exited;
     cnd_t           cnd_joined;
@@ -50,8 +80,6 @@ struct _tld {
     mtx_t           mtx_joined;
 #if defined(_M_I86)
     void            *dyn_stack;
-#else
-    HEV             thread_event;
 #endif
     int             exit_code;
     int             thread_state;    
@@ -72,26 +100,24 @@ extern void         __init_stdthread(void);
 extern struct _tld* NEAR    *ThrdData;
 #define THREAD_DATA         (ThrdData[*_threadid])
 
-#define acquire_mutex       DosSemRequest
 #define release_mutex       DosSemClear
 #define post_event          DosSemClear
 #define reset_event         DosSemSet
-#define wait_event          DosSemWait
 
-static APIRET __inline wait_event_noint(PULONG sem, long timo)
+static int __inline wait_event(PULONG sem, long timo)
 {
     APIRET result;
     while (ERROR_INTERRUPT == (result = DosSemWait(sem, timo)))
         ;
-    return result;
+    return result == NO_ERROR;
 }
 
-static APIRET __inline acquire_mutex_noint(PULONG sem, long timo)
+static int __inline acquire_mutex(PULONG sem, long timo)
 {
     APIRET result;
     while (ERROR_INTERRUPT == (result = DosSemRequest(sem, timo)))
         ;
-    return result;
+    return result == NO_ERROR;
 }
 
 #else
@@ -99,11 +125,9 @@ static APIRET __inline acquire_mutex_noint(PULONG sem, long timo)
 extern struct _tld*             *CurThrdData;
 #define THREAD_DATA             (*CurThrdData)
 
-#define acquire_mutex(m, timo)  DosRequestMutexSem(*(m), timo)
 #define release_mutex(m)        DosReleaseMutexSem(*(m))
 #define post_event(e)           DosPostEventSem(*(e))
 #define reset_event(e)          _reset_event(*(e))
-#define wait_event(e, timo)     DosWaitEventSem(*(e), timo)
 
 static APIRET __inline _reset_event(HEV hEvent)
 {
@@ -111,20 +135,20 @@ static APIRET __inline _reset_event(HEV hEvent)
     return DosResetEventSem(hEvent, &post_cnt);
 }
 
-static APIRET __inline wait_event_noint(PHEV sem, long timo)
+static int __inline wait_event(PHEV sem, long timo)
 {
     APIRET result;
     while (ERROR_INTERRUPT == (result = DosWaitEventSem(*sem, timo)))
         ;
-    return result;
+    return result == NO_ERROR;
 }
 
-static APIRET __inline acquire_mutex_noint(PHMTX sem, long timo)
+static int __inline acquire_mutex(PHMTX sem, long timo)
 {
     APIRET result;
     while (ERROR_INTERRUPT == (result = DosRequestMutexSem(*sem, timo)))
         ;
-    return result;
+    return result == NO_ERROR;
 }
 
 #endif
@@ -134,5 +158,16 @@ static APIRET __inline acquire_mutex_noint(PHMTX sem, long timo)
 extern DWORD __key_tld;
 
 #define THREAD_DATA  ((struct _tld *)TlsGetValue(__key_tld))
+
+#define post_event(e)           SetEvent(*(e))
+#define reset_event(e)          ResetEvent(*(e))
+
+extern int __inline wait_event(HANDLE *event, long timo)
+{
+    DWORD res;
+    while ((res = WaitForSingleObjectEx(*event, (DWORD)timo, TRUE)) == WAIT_IO_COMPLETION)
+        ;
+    return res == WAIT_OBJECT_0;
+}
 
 #endif

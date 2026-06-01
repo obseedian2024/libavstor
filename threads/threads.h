@@ -37,22 +37,6 @@
 
 #include <time.h>
 
-#if defined(__OS2__)
-
-#undef _WIN32
-#if !defined(OS2_INCLUDED)
-
-#define INCL_DOS
-#define INCL_DOSERRORS
-#define INCL_DOSPROCESS
-#include <os2.h>
-
-#endif
-#elif defined(_WIN32)
-
-#include <Windows.h>
-#endif
-
 #include "stdatomic.h"
 
 #if defined(_MSC_VER) && _MSC_VER < 1200
@@ -91,22 +75,19 @@ typedef struct {
     unsigned int _key;
 } tss_t;
 
+struct _mcs_lock {
+    atomic_ptr          _tail;
+};
+
 typedef struct _usem {
+    struct _mcs_lock    _lock;
 #if defined(_WIN32)
-    CRITICAL_SECTION    _cs;
-    HANDLE              _event;
+    void                *_event;
 #elif defined(__OS2__)
-#if defined(_M_I86)
-    ULONG   _event_sem;
-    ULONG   _mtx_sem;
-#else
-    HEV     _event_sem;
-    HMTX    _mtx_sem;
+    unsigned long       _event;
 #endif
-    int _waiters;
-#endif
-    int _max_count;
-    int _sema_count;	
+    signed short        _max_count;
+    signed short        _sema_count;
 } _usem;
 
 typedef struct mtx {    
@@ -116,17 +97,23 @@ typedef struct mtx {
     struct _usem        _wait_sem;
 } mtx_t;
 
+typedef struct {
+    mtx_t				_mtx;
+#if defined(_WIN32)
+    void                *_event;
+#elif defined(__OS2__)
+    unsigned long       _event;
+#endif
+    short               _waiters;
+    short               _wakeups;
+} cnd_t;
+
 #if defined(_WIN32)
 
 typedef struct {
     void*       _Handle;
     unsigned    _ThreadID;
 } thrd_t;
-
-typedef struct {
-    volatile atomic_int _state;
-    void                *_ksem;
-} cnd_t;
 
 #elif defined(__OS2__)
 
@@ -136,24 +123,6 @@ typedef struct {
     struct _tld         *_thr_data;
     int                 _thr_id;
 } thrd_t;
-
-struct _wait_item {
-#if defined(_M_I86)
-    ULONG               _wait_event;
-#else
-    HEV                 _wait_event;
-#endif
-    struct _wait_item   *_pred;
-    struct _wait_item   *_next;
-};
-
-typedef struct {
-    struct _wait_item   *_head;
-    struct _wait_item   *_tail;
-    int                 _sema_count;
-    int                 _max_waiters;
-    mtx_t               _mtx;
-} cnd_t;
 
 extern void* __ThreadStackAddr;
 
@@ -193,7 +162,7 @@ void* __cdecl tss_get(tss_t tss_key);
 
 void __cdecl call_once(once_flag* flag, void(*_Func)(void));
 
-int __cdecl _usem_init(struct _usem *sem, int initial_count, int max_count);
+int __cdecl _usem_init(struct _usem *sem, short initial_count, short max_count);
 void __cdecl _usem_destroy(struct _usem *sem);
 int __cdecl _usem_acquire(struct _usem *sem);
 int __cdecl _usem_release(struct _usem *sem);
