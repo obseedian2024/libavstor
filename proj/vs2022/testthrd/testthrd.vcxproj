@@ -21,6 +21,11 @@
   <ItemGroup>
     <ClCompile Include="..\..\..\threads\test.c" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\stdthreads\stdthreads.vcxproj">
+      <Project>{c97a66ef-dafc-4358-bf4c-13e6fc38d6af}</Project>
+    </ProjectReference>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
