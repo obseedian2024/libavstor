@@ -366,7 +366,11 @@ void __cdecl mtx_destroy(mtx_t* mtx)
 
 int __cdecl mtx_trylock(mtx_t* mtx)
 {
+#if defined(_M_IX86) && _M_IX86 == 300
     return _locked_exchange(&mtx->_lock, 1) ? thrd_error : thrd_success;
+#else
+    return atomic_exchange(&mtx->_lock, 1) ? thrd_error : thrd_success;
+#endif
 }
 
 int __cdecl mtx_lock(mtx_t* mtx)
