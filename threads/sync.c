@@ -272,9 +272,13 @@ static void _cnd_decrement_waiters(cnd_t *cond)
 
 int __cdecl cnd_wait(cnd_t *cond, mtx_t *mtx)
 {
-    // Always wait at least once
+    //
+    // It does not seem advantageous to wait when _wakeups > 0 since 
+    // we are using a manual reset event and it would still be posted, hence
+    // the wait would be immediately satisfied anyway
+    //
     mtx_lock(&cond->_mtx);
-    do {
+    while (cond->_wakeups == 0) {
         int wait_succ;
         cond->_waiters++;
 		mtx_unlock(&cond->_mtx);
@@ -298,16 +302,14 @@ int __cdecl cnd_wait(cnd_t *cond, mtx_t *mtx)
             mtx_unlock(&cond->_mtx);
             return thrd_error;
         }
-
-        // Someone stole our wakeup so we need to wait again
-    } while (cond->_wakeups == 0);
+    }
 
     cond->_wakeups--;
 
     // If all wakeups satisfied, block further waiters.
-    if (cond->_wakeups == 0) {        
+    if (cond->_wakeups == 0) {
         reset_event(&cond->_event);
-    }
+        }
 	mtx_unlock(&cond->_mtx);
 
     return thrd_success;
