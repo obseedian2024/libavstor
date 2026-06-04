@@ -55,24 +55,24 @@
 typedef USHORT APIRET;
 #endif
 
+#if defined(_WIN32)
+#define OS_EVENT    HANDLE
+#elif defined(__OS2__)
+#define OS_EVENT    unsigned long
+#endif
+
 struct _mcs_node {
 	atomic_int      locked;
 	atomic_ptr      next;
-#if defined(_WIN32)
-    void            **event;
-#elif defined(__OS2__)
-    unsigned long   *event;
-#endif
+    OS_EVENT        *event;
 };
 
 struct _tld {
     thrd_t          thr;
     void*           *tls_data;
     struct _mcs_node sem_lock;
-#if defined(_WIN32)
-    void            *thread_event;
-#elif defined(__OS2__)
-    unsigned long   thread_event;
+    OS_EVENT        thread_event;
+#if defined(__OS2__)
     struct _tld     *next_detach;
     cnd_t           cnd_exited;
     cnd_t           cnd_joined;
@@ -104,7 +104,7 @@ extern struct _tld* NEAR    *ThrdData;
 #define post_event          DosSemClear
 #define reset_event         DosSemSet
 
-static int __inline wait_event(PULONG sem, long timo)
+static int __inline wait_event(OS_EVENT *sem, long timo)
 {
     APIRET result;
     while (ERROR_INTERRUPT == (result = DosSemWait(sem, timo)))
@@ -129,13 +129,13 @@ extern struct _tld*             *CurThrdData;
 #define post_event(e)           DosPostEventSem(*(e))
 #define reset_event(e)          _reset_event(*(e))
 
-static APIRET __inline _reset_event(HEV hEvent)
+static APIRET __inline _reset_event(OS_EVENT hEvent)
 {
     ULONG post_cnt;
     return DosResetEventSem(hEvent, &post_cnt);
 }
 
-static int __inline wait_event(PHEV sem, long timo)
+static int __inline wait_event(OS_EVENT *sem, long timo)
 {
     APIRET result;
     while (ERROR_INTERRUPT == (result = DosWaitEventSem(*sem, timo)))
@@ -162,7 +162,7 @@ extern DWORD __key_tld;
 #define post_event(e)           SetEvent(*(e))
 #define reset_event(e)          ResetEvent(*(e))
 
-extern int __inline wait_event(HANDLE *event, long timo)
+static int __inline wait_event(OS_EVENT *event, long timo)
 {
     DWORD res;
     while ((res = WaitForSingleObjectEx(*event, (DWORD)timo, TRUE)) == WAIT_IO_COMPLETION)
