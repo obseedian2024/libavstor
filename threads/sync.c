@@ -45,6 +45,7 @@
 #define WIN32_LEAN_AND_MEAN 1
 #endif
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,41 +67,98 @@
 #define PRAGMA_LOOP_NO_UNROLL
 #endif
 
-#define _MAX_SEM ((int)(((unsigned)-1) >> 1))
+#define _MAX_SEM            ((short)(((unsigned short)-1) >> 1))
+#define MCS_LOCK_SPIN       40
 
-#if defined(_WIN32)
-#include <Windows.h>
+// TODO: more robust checking of return values
+// TODO: cache-friendliness
 
-typedef union WaiterState {
-    struct {
-        short sema;
-        short max_waiters;
-    } s;
-    int       state;
-} WaiterState;
+int __cdecl _mtx_init(mtx_t *mtx, int type);
+
+//
+// An MCS parking lock
+//
+static void mcs_lock_acquire(struct _mcs_lock *ml, struct _mcs_node *ctx)
+{
+	struct _mcs_node *pred;
+	atomic_store_ptr(&ctx->next, NULL);
+	pred = atomic_exchange_ptr(&ml->_tail, ctx);
+
+	if (pred != NULL) {
+        int spin = MCS_LOCK_SPIN;
+        int one = 1;
+		atomic_store(&ctx->locked, 1);
+		atomic_store_ptr(&pred->next, ctx);
+        while (atomic_load(&ctx->locked) && spin-- > 0) {
+            _cpu_pause();
+        }
+
+        // Atomically update lock state to waiting only if still locked
+        if (atomic_compare_exchange_strong(&ctx->locked, &one, -1))
+        {
+            wait_event(ctx->event, -1);
+            reset_event(ctx->event);
+
+            assert(atomic_load(&ctx->locked) == 0);
+        }
+	}
+}
+
+static void mcs_lock_release(struct _mcs_lock *ml, struct _mcs_node *ctx)
+{
+    struct _mcs_node *next;
+
+	if ((next = atomic_load_ptr(&ctx->next)) == NULL) {
+		struct _mcs_node *cur = ctx;
+		if (atomic_compare_exchange_ptr_strong(&ml->_tail, &cur, NULL)) {
+			return;
+		}
+		while ((next = atomic_load_ptr(&ctx->next)) == NULL) {
+			_cpu_pause();
+		}
+	}
+    
+    // Set event only if definitely waiting
+    if (atomic_exchange(&next->locked, 0) < 0) {
+        post_event(next->event);
+    }
+}
 
 //
 // User space counting semaphore. These will be significantly faster for
 // the uncontended case, since we don't need to call into the kernel
 //
-int __cdecl _usem_init(struct _usem *sem, int initial_count, int max_count)
+int __cdecl _usem_init(struct _usem *sem, short initial_count, short max_count)
 {
     memset(sem, 0, sizeof(*sem));
     sem->_max_count = max_count;
     sem->_sema_count = initial_count;
-    InitializeCriticalSection(&sem->_cs);
-    sem->_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+#if defined(_WIN32)
+    sem->_event = CreateEventA(NULL, TRUE, FALSE, NULL);
     if (!sem->_event) {
-        DeleteCriticalSection(&sem->_cs);
         return 0;
     }
+#elif defined(__OS2__)
+#if defined(_M_I86)
+    sem->_event = 0;
+    reset_event(&sem->_event);
+#else
+    if (NO_ERROR != DosCreateEventSem(NULL, &sem->_event, 0, FALSE)) {
+        fprintf(stderr, "stdthrd: DosCreateEventSem failed.\n");
+        return 0;
+    }
+#endif
+#endif
     return 1;
 }
 
 void __cdecl _usem_destroy(struct _usem *sem)
 {
-    DeleteCriticalSection(&sem->_cs);
+#if defined(_WIN32)
     CloseHandle(sem->_event);
+#elif defined(__OS2__) && !defined(_M_I86)
+    DosCloseEventSem(sem->_event);
+#endif
     memset(sem, 0, sizeof(*sem));
 }
 
@@ -111,372 +169,182 @@ void __cdecl _usem_destroy(struct _usem *sem)
 int __cdecl _usem_acquire(struct _usem *sem)
 {
     int result = 1;
-    EnterCriticalSection(&sem->_cs);
+    struct _mcs_node *mnode = &THREAD_DATA->sem_lock;
+    
+    if (!wait_event(&sem->_event, -1)) return 0;
+
+    mcs_lock_acquire(&sem->_lock, mnode);
     while (sem->_sema_count == 0) {
-        DWORD wait_result;
-        sem->_waiters++;
-        LeaveCriticalSection(&sem->_cs);
+        mcs_lock_release(&sem->_lock, mnode);
 
-        while ((wait_result = WaitForSingleObjectEx(sem->_event, INFINITE, TRUE)) == WAIT_IO_COMPLETION)
-            ;
-        if (wait_result != WAIT_OBJECT_0) {
-            result = 0;
-        }
+        if (!wait_event(&sem->_event, -1)) return 0;
 
-        EnterCriticalSection(&sem->_cs);
-        sem->_waiters--;
+        mcs_lock_acquire(&sem->_lock, mnode);
     }
     sem->_sema_count--;
-    LeaveCriticalSection(&sem->_cs);
+    if (sem->_sema_count == 0) {
+        reset_event(&sem->_event);
+	}
+    mcs_lock_release(&sem->_lock, mnode);
+
     return result;
 }
 
 int __cdecl _usem_release(struct _usem *sem)
 {
-    EnterCriticalSection(&sem->_cs);
-    sem->_sema_count++;
-    if (sem->_waiters > 0) {
-        if (!SetEvent(sem->_event)) {
-            LeaveCriticalSection(&sem->_cs);
-            return 0;
+    struct _mcs_node *mnode = &THREAD_DATA->sem_lock;
+
+    mcs_lock_acquire(&sem->_lock, mnode);
+    if (sem->_sema_count < sem->_max_count) {
+        if (sem->_sema_count == 0) {
+            post_event(&sem->_event);
         }
+        sem->_sema_count++;
     }
-    LeaveCriticalSection(&sem->_cs);
+    mcs_lock_release(&sem->_lock, mnode);
+
     return 1;
 }
 
-//
-// Acquire condvar semaphore. If we need to wait, return 1 else 0.
-//
-static int __inline _cnd_acquire_sema(cnd_t *cond)
+/* 
+* This simple condition variable implementation is basically a counting
+* semaphore with a dynamically adjusted upper limit. The number of waiters
+* is the semaphore count and the number of wakeups is the upper limit.
+* Not compliant with POSIX semantics since wakeups can be stolen. Fairness
+* depends on underlying OS event implementation: reasonably fair under NT
+* but very unfair under OS/2.
+*/
+int __cdecl _cnd_init(cnd_t* cond)
 {
-    WaiterState cur; 
-    WaiterState next;
-    cur.state = atomic_load(&cond->_state);
-    do {
-        next = cur;
-        next.s.sema--;
-        if (-next.s.sema > next.s.max_waiters) {
-            next.s.max_waiters = -next.s.sema;
-        }
-    } while (!atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state));
-
-    return next.s.sema < 0;
-}
-
-//
-// Release condvar semaphore. If we need to release the kernel semaphore, 
-// return 1 else 0.
-//
-static int __inline _cnd_release_sema(cnd_t *cond)
-{
-    WaiterState cur;
-    WaiterState next;
-    cur.state = atomic_load(&cond->_state);
-    while (cur.s.sema < cur.s.max_waiters) {
-        next = cur;
-        next.s.sema++;
-        if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
-            return cur.s.sema < 0;
-        }
-    }
-    return 0;
-}
-
-int __cdecl cnd_init(cnd_t* cond)
-{
-    WaiterState st;
-
-    call_once_init_stdthread;
-
-    st.s.max_waiters = 1;
-    st.s.sema = 0;
-
-    if (!(cond->_ksem = CreateSemaphoreA(NULL, 0, 0x7FFFFFFF, NULL))) {
+    cond->_waiters = 0;
+    cond->_wakeups = 0;
+    if (thrd_error == _mtx_init(&cond->_mtx, mtx_plain)) {
         return thrd_error;
     }
-    atomic_store(&cond->_state, st.state);
+#if defined(_WIN32)
+    if (!(cond->_event = CreateEventA(NULL, TRUE, FALSE, NULL))) {
+        mtx_destroy(&cond->_mtx);
+        return thrd_error;
+    }
+#elif defined(__OS2__)
+#if defined(_M_I86)
+    cond->_event = 0;
+    reset_event(&cond->_event);
+#else
+    if (NO_ERROR != DosCreateEventSem(NULL, &cond->_event, 0, FALSE)) {
+        fprintf(stderr, "stdthrd: DosCreateEventSem failed.\n");
+        mtx_destroy(&cond->_mtx);
+        return thrd_error;
+    }
+#endif
+#endif
     return thrd_success;
+}
+
+int __cdecl cnd_init(cnd_t *cond)
+{
+    call_once_init_stdthread();
+    return _cnd_init(cond);
 }
 
 void __cdecl cnd_destroy(cnd_t* cond)
 {
-    CloseHandle(cond->_ksem);
+    mtx_destroy(&cond->_mtx);
+#if defined(_WIN32)
+    CloseHandle(cond->_event);
+#elif defined(__OS2__) && !defined(_M_I86)
+    DosCloseEventSem(cond->_event);
+#endif
 }
 
-int __cdecl cnd_wait(cnd_t* cond, mtx_t* mtx)
+static void _cnd_decrement_waiters(cnd_t *cond)
 {
-    int result = thrd_success;
-    int should_wait = _cnd_acquire_sema(cond);
+    mtx_lock(&cond->_mtx);
 
-    if (mtx_unlock(mtx) != thrd_success) {
-        return thrd_error;
+    // Decrement waiters and ensure wakeups is not more than waiters
+    cond->_waiters--;
+    if (cond->_wakeups > cond->_waiters) {
+        cond->_wakeups = cond->_waiters;
     }
 
-    if (should_wait) {
-        DWORD wait_result = WaitForSingleObjectEx(cond->_ksem, INFINITE, TRUE);
+    mtx_unlock(&cond->_mtx);
+}
+
+int __cdecl cnd_wait(cnd_t *cond, mtx_t *mtx)
+{
+    //
+    // It does not seem advantageous to wait when _wakeups > 0 since 
+    // we are using a manual reset event and it would still be posted, hence
+    // the wait would be immediately satisfied anyway
+    //
+    mtx_lock(&cond->_mtx);
+    while (cond->_wakeups == 0) {
+        int wait_succ;
+        cond->_waiters++;
+		mtx_unlock(&cond->_mtx);
+
+        if (mtx_unlock(mtx) != thrd_success) {
+            _cnd_decrement_waiters(cond);
+            return thrd_error;
+        }
         
-        // If the wait is not satisified, we need to release the condvar semaphore
-        if (wait_result != WAIT_OBJECT_0) {
-            _cnd_release_sema(cond);
+        wait_succ = wait_event(&cond->_event, -1);
+
+        if (mtx_lock(mtx) != thrd_success) {
+            _cnd_decrement_waiters(cond);
+            return thrd_error;
         }
 
-        result = (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_IO_COMPLETION)
-            ? thrd_success : thrd_error;
+		mtx_lock(&cond->_mtx);
+        cond->_waiters--;
+
+        if (!wait_succ) {
+            mtx_unlock(&cond->_mtx);
+            return thrd_error;
+        }
     }
 
-    if (mtx_lock(mtx) != thrd_success) {
-        return thrd_error;
-    }
-    return result;
+    cond->_wakeups--;
+
+    // If all wakeups satisfied, block further waiters.
+    if (cond->_wakeups == 0) {
+        reset_event(&cond->_event);
+        }
+	mtx_unlock(&cond->_mtx);
+
+    return thrd_success;
 }
 
 int __cdecl cnd_signal(cnd_t* cond)
 {
-    if (_cnd_release_sema(cond)) {
-        return ReleaseSemaphore(cond->_ksem, 1, NULL) ? thrd_success : thrd_error;
+	mtx_lock(&cond->_mtx);    
+    if (cond->_wakeups < cond->_waiters) {
+        if (cond->_wakeups == 0) {
+            post_event(&cond->_event);
+        }
+        cond->_wakeups++;
     }
+	mtx_unlock(&cond->_mtx);
+
     return thrd_success;
 }
 
 int __cdecl cnd_broadcast(cnd_t* cond)
 {
-    WaiterState cur;
-    WaiterState next;
-    cur.state = atomic_load(&cond->_state);
-    while (cur.s.sema < cur.s.max_waiters) {
-        next = cur;
-        next.s.sema = next.s.max_waiters;
-        if (atomic_compare_exchange_weak(&cond->_state, &cur.state, next.state)) {
-            if (cur.s.sema < 0) {
-                return ReleaseSemaphore(cond->_ksem, -cur.s.sema, NULL) ? thrd_success : thrd_error;
-            }
-            break;
+	mtx_lock(&cond->_mtx);    
+    if (cond->_wakeups < cond->_waiters) {
+        if (cond->_wakeups == 0) {
+            post_event(&cond->_event);
         }
+        cond->_wakeups = cond->_waiters;
     }
+	mtx_unlock(&cond->_mtx);
+
     return thrd_success;
 }
 
-#elif defined(__OS2__)
-
-int _usem_init(struct _usem *sem, int initial_count, int max_count)
+int __cdecl _mtx_init(mtx_t* mtx, int type)
 {
-    memset(sem, 0, sizeof(*sem));
-    sem->_max_count = max_count;
-    sem->_sema_count = initial_count;
-#if !defined(_M_I86)
-    if (NO_ERROR != DosCreateMutexSem(NULL, &sem->_mtx_sem, 0, FALSE)) {
-        return 0;
-    }
-    if (NO_ERROR != DosCreateEventSem(NULL, &sem->_event_sem, 0, FALSE)) {
-        DosCloseMutexSem(sem->_mtx_sem);
-        return 0;
-    }
-#endif
-    return 1;
-}
-
-void _usem_destroy(struct _usem *sem)
-{
-#if !defined(_M_I86)
-    DosCloseMutexSem(sem->_mtx_sem);
-    DosCloseEventSem(sem->_event_sem);
-#endif
-    memset(sem, 0, sizeof(*sem));
-}
-
-int _usem_acquire(struct _usem *sem)
-{
-    if (acquire_mutex_noint(&sem->_mtx_sem, -1) != NO_ERROR) {
-        return 0;
-    }
-	while (sem->_sema_count == 0) {
-		sem->_waiters++;
-        reset_event(&sem->_event_sem);
-		release_mutex(&sem->_mtx_sem);
-
-        if (wait_event_noint(&sem->_event_sem, -1) != NO_ERROR) {
-            return 0;
-        }
-
-        if (acquire_mutex_noint(&sem->_mtx_sem, -1) != NO_ERROR) {
-            return 0;
-        }
-		sem->_waiters--;
-	}
-	sem->_sema_count--;
-    release_mutex(&sem->_mtx_sem);
-    return 1;
-}
-
-int _usem_release(struct _usem *sem)
-{
-    if (acquire_mutex_noint(&sem->_mtx_sem, -1) != NO_ERROR) {
-        return 0;
-    }
-    sem->_sema_count++;
-    if (sem->_waiters > 0) {
-        post_event(&sem->_event_sem);
-    }
-    release_mutex(&sem->_mtx_sem);
-    return 1;
-}
-
-int __cdecl cnd_init(cnd_t* cond)
-{
-    call_once_init_stdthread;
-
-    memset(cond, 0, sizeof(*cond));
-    cond->_max_waiters = 1;
-    return mtx_init(&cond->_mtx, mtx_plain);
-}
-
-void __cdecl cnd_destroy(cnd_t *cond)
-{
-    mtx_destroy(&cond->_mtx);
-    memset(cond, 0, sizeof(*cond));
-}
-
-static int _cnd_try_enqueue_wait_item(cnd_t *cond, struct _wait_item *item)
-{
-    int should_wait;
-
-    cond->_sema_count--;
-    if (-cond->_sema_count > cond->_max_waiters) {
-        cond->_max_waiters = -cond->_sema_count;
-    }
-
-    if ((should_wait = cond->_sema_count < 0)) {
-        item->_next = NULL;
-        item->_pred = cond->_tail;
-#if defined(_M_I86)
-        item->_wait_event = 0;        
-#else
-        item->_wait_event = THREAD_DATA->thread_event;
-#endif
-        reset_event(&item->_wait_event);
-        if (cond->_tail) {            
-            cond->_tail->_next = item;
-            cond->_tail = item;
-        }
-        else {
-            cond->_tail = item;
-            cond->_head = item;
-        }        
-    }
-    return should_wait;
-}
-
-static void _cnd_remove_wait_item(cnd_t *cond, struct _wait_item *item)
-{
-    if (cond->_head) {
-        if (cond->_head == item) {
-            cond->_head = item->_next;
-        }
-        if (cond->_tail == item) {
-            cond->_tail = item->_pred;
-        }
-        if (item->_next) {
-            item->_next->_pred = item->_pred;
-        }
-        if (item->_pred) {
-            item->_pred->_next = item->_next;
-        }
-    }
-    item->_next = NULL;
-    item->_pred = NULL;
-}
-
-static struct _wait_item *_cnd_dequeue_wait_item(cnd_t *cond)
-{
-    struct _wait_item *result = cond->_head;
-    if (result) {
-        if (result->_next) {
-            result->_next->_pred = NULL;
-        }
-        if (!(cond->_head = result->_next)) {
-            cond->_tail = NULL;
-        }
-        result->_next = NULL;
-        result->_pred = NULL;
-    }
-    return result;
-}
-
-int __cdecl cnd_wait(cnd_t *cond, mtx_t *mtx)
-{
-    struct _wait_item item;
-    int result = thrd_success;
-    int should_wait;
-
-    mtx_lock(&cond->_mtx);
-    should_wait = _cnd_try_enqueue_wait_item(cond, &item);
-    mtx_unlock(&cond->_mtx);
-
-    mtx_unlock(mtx);
-
-    if (should_wait) {
-        APIRET wait_result = wait_event(&item._wait_event, -1);
-        switch (wait_result) {
-        case NO_ERROR:
-        case ERROR_INTERRUPT:
-            result = thrd_success;
-            break;
-        case ERROR_SEM_TIMEOUT:
-            result = thrd_timedout;
-            break;
-        default:
-            result = thrd_error;
-        }
-        // If the wait was not satisfied, remove ourselves from the queue
-        if (wait_result != NO_ERROR) {
-            mtx_lock(&cond->_mtx);
-            _cnd_remove_wait_item(cond, &item);
-            mtx_unlock(&cond->_mtx);
-        }
-    }
-    mtx_lock(mtx);
-    return result;
-}
-
-int __cdecl cnd_signal(cnd_t* cond)
-{
-    struct _wait_item *item = NULL;
-
-    mtx_lock(&cond->_mtx);
-    if (cond->_sema_count < cond->_max_waiters) {
-        cond->_sema_count++;
-        if (cond->_sema_count <= 0) {
-            if ((item = _cnd_dequeue_wait_item(cond))) {
-                post_event(&item->_wait_event);
-            }
-        }
-    }
-    mtx_unlock(&cond->_mtx);
-    return thrd_success;
-}
-
-int __cdecl cnd_broadcast(cnd_t *cond)
-{
-    struct _wait_item *item;
-
-    mtx_lock(&cond->_mtx);
-    cond->_sema_count = 0;
-
-    while ((item = _cnd_dequeue_wait_item(cond))) {
-        post_event(&item->_wait_event);
-    }
-
-    mtx_unlock(&cond->_mtx);
-    return thrd_success;
-}
-
-#endif
-
-int __cdecl mtx_init(mtx_t* mtx, int type)
-{
-    call_once_init_stdthread;
-
     if (type & mtx_recursive) {
         fprintf(stderr, "FATAL: stdthrd: Recursive mutexes are not currently supported.\n");
         abort();
@@ -487,6 +355,12 @@ int __cdecl mtx_init(mtx_t* mtx, int type)
     return _usem_init(&mtx->_wait_sem, 0, _MAX_SEM) ? thrd_success : thrd_error;
 }
 
+int __cdecl mtx_init(mtx_t *mtx, int type)
+{
+    call_once_init_stdthread();
+    return _mtx_init(mtx, type);
+}
+
 void __cdecl mtx_destroy(mtx_t* mtx)
 {
     _usem_destroy(&mtx->_wait_sem);
@@ -494,13 +368,26 @@ void __cdecl mtx_destroy(mtx_t* mtx)
 
 int __cdecl mtx_trylock(mtx_t* mtx)
 {
+#if defined(_M_IX86) && _M_IX86 == 300
+    return _locked_exchange(&mtx->_lock, 1) ? thrd_error : thrd_success;
+#else
     return atomic_exchange(&mtx->_lock, 1) ? thrd_error : thrd_success;
+#endif
 }
 
-// This is pretty fast if compiled with clang and real C11 atomics
-// OK on Watcom
 int __cdecl mtx_lock(mtx_t* mtx)
 {
+#if defined(_M_IX86) && _M_IX86 == 300
+    // Special version for 386 so we don't have to use global spinlock
+    while (_locked_exchange(&mtx->_lock, 1)) {
+        if (_locked_dec(&mtx->_count) < 0) {
+            if (!_usem_acquire(&mtx->_wait_sem)) {
+                _locked_inc(&mtx->_count);
+                return thrd_error;
+            }
+        }
+    }
+#else
     while (atomic_exchange(&mtx->_lock, 1)) {
         if (atomic_fetch_add(&mtx->_count, -1) <= 0) {
             if (!_usem_acquire(&mtx->_wait_sem)) {
@@ -509,25 +396,30 @@ int __cdecl mtx_lock(mtx_t* mtx)
             }
         }
     }
+#endif
     return thrd_success;
 }
 
 int __cdecl mtx_unlock(mtx_t* mtx)
 {
-    if (atomic_exchange(&mtx->_lock, 0)) {
-        int cur = atomic_load(&mtx->_count);
-
-        // This has to be a <= comparison, not < as it might be expected.
-        // Otherwise, deadlocks can occur.
-        while (cur <= 0) {
-            if (atomic_compare_exchange_strong(&mtx->_count, &cur, cur + 1)) {
-                if (cur < 0 && !_usem_release(&mtx->_wait_sem)) {
-                    return thrd_error;
-                }
-                break;
+#if defined(_M_IX86) && _M_IX86 == 300
+    if (_locked_exchange(&mtx->_lock, 0)) {
+        if (_locked_load(&mtx->_count) <= 0) {
+            if (_locked_inc(&mtx->_count) <= 0 && !_usem_release(&mtx->_wait_sem)) {
+                return thrd_error;
             }
         }
         return thrd_success;
+    }
+#else
+    if (atomic_exchange(&mtx->_lock, 0)) {
+        if (atomic_load(&mtx->_count) <= 0) {
+            if (atomic_fetch_add(&mtx->_count, 1) < 0 && !_usem_release(&mtx->_wait_sem)) {
+                return thrd_error;
+            }
+        }       
+        return thrd_success;
 	}
+#endif
     return thrd_error;
 }

@@ -36,17 +36,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#if (defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L))
-
-#include <stdatomic.h>
-#include <threads.h>
-
-#else
-
-#include "stdatomic.h"
 #include "threads.h"
-
-#endif
 
 #define iterations 100000
 #define total_prod 4
@@ -147,7 +137,7 @@ static int __cdecl prod_func(void *param)
     p->produced = 0;
     for (i = p->N1; i <= p->N2; i++)
     {
-        mtx_lock(&_mtx_queue);
+        mtx_lock(&_mtx_queue);        
         while (!queue_tryenqueue(qu, i)) {
             cnd_wait(&_cnd_not_full, &_mtx_queue);
         }

@@ -41,7 +41,6 @@
 #define INCL_DOSPROCESS
 #include <os2.h>
 
-#include <stdlib.h>
 #include <string.h>
 
 #elif defined(_WIN32)
@@ -53,6 +52,7 @@
 
 #include <process.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "stdatomic.h"
 #include "_threads.h"
@@ -72,6 +72,46 @@ static struct _tld  tdata_main;
 static signed char  TLSIndexMap[_MAX_TLS_KEY + 1] = { 0 };
 static tss_dtor_t   TLSDestructors[_MAX_TLS_KEY + 1] = { NULL };
 static mtx_t        mtx_tls;
+
+extern int __cdecl _cnd_init(cnd_t *cond);
+extern int __cdecl _mtx_init(mtx_t *mtx, int type);
+
+static int create_thread_event(struct _tld *tdata)
+{
+#if defined(_WIN32)
+    tdata->thread_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (tdata->thread_event == NULL) {
+        fprintf(stderr, "stdthrd: CreateEvent failed.\n");
+        return 0;
+    }
+#elif defined(__OS2__)
+#if defined(_M_I86)
+    tdata->thread_event = 0;
+    reset_event(&tdata->thread_event);
+#else
+    if (NO_ERROR != DosCreateEventSem(NULL, &tdata->thread_event, 0, FALSE)) {
+        fprintf(stderr, "stdthrd: DosCreateEventSem failed.\n");
+        return 0;
+    }
+#endif
+#endif
+
+    tdata->sem_lock.event = &tdata->thread_event;
+    return 1;
+}
+
+static void destroy_thread_event(struct _tld *tdata)
+{
+#if defined(_WIN32)
+    CloseHandle(tdata->thread_event);
+#elif defined(__OS2__) 
+#if defined(_M_I86)
+    tdata->thread_event = 0;
+#else
+    DosCloseEventSem(tdata->thread_event);
+#endif
+#endif
+}
 
 static void *alloc_tls_data(struct _tld* tdata)
 {
@@ -103,6 +143,7 @@ static void finalize_tls_data(struct _tld* tdata)
     }
     mtx_unlock(&mtx_tls);
 }
+
 #if defined(_WIN32)
 
 DWORD __key_tld;
@@ -116,6 +157,21 @@ struct ThreadParams {
     struct _tld     *tdata;
 };
 
+typedef int *pint;
+typedef void *pvoid;
+
+#if defined(__WATCOMC__)
+static void _WCCALLBACK done_stdthread(void)
+#else
+static void __cdecl done_stdthread(void)
+#endif
+{   
+    finalize_tls_data(&tdata_main);
+    mtx_destroy(&mtx_tls);
+    destroy_thread_event(&tdata_main);
+    TlsFree(__key_tld);
+}
+
 void __init_stdthread(void)
 {
     ZeroMemory(&tdata_main, sizeof(tdata_main));
@@ -124,6 +180,12 @@ void __init_stdthread(void)
     // Note: this is a pseudo-handle.
     tdata_main.thr._Handle = GetCurrentThread();    
 
+    if (!create_thread_event(&tdata_main)) {
+        abort();
+    }
+
+    _mtx_init(&mtx_tls, mtx_plain);
+
     if (TLS_OUT_OF_INDEXES == (__key_tld = TlsAlloc())) {
         fprintf(stderr, "FATAL: stdthrd: TlsAlloc failed.\n");
         abort();
@@ -131,9 +193,14 @@ void __init_stdthread(void)
 
     if (!alloc_tls_data(&tdata_main)) {
         abort();
-    }
+    }    
 
     TlsSetValue(__key_tld, &tdata_main);
+
+    if (atexit(done_stdthread)) {
+        fprintf(stderr, "FATAL: stdthrd: atexit failed.\n");
+        abort();
+    }
 }
 
 static
@@ -147,10 +214,13 @@ threadproc(void *arglist)
     void *p_arg = param->arg;
 
     memset(&tdata, 0, sizeof(tdata));
+
+    if (!create_thread_event(&tdata)) {
+        goto err_event;
+    }
+
     if (!alloc_tls_data(&tdata)) {
-        param->thr->_Handle = NULL;
-        SetEvent(param->event_done);
-        _endthread();
+        goto err_tls_alloc;
     }
 
     WaitForSingleObject(param->event_init, INFINITE);
@@ -159,8 +229,18 @@ threadproc(void *arglist)
     TlsSetValue(__key_tld, &tdata);
 
     SetEvent(param->event_done);
+    thrd_exit(p_func(p_arg));
 
-    return (unsigned)p_func(p_arg);
+err_tls_alloc:
+    destroy_thread_event(&tdata);
+err_event:
+    param->thr->_Handle = NULL;
+    SetEvent(param->event_done);
+    _endthread();
+
+    // We shoould never reach this point
+    abort();
+    return 0;
 }
 
 int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
@@ -171,7 +251,7 @@ int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *sta
 
     (void)stack_bottom;
 
-    call_once_init_stdthread;
+    call_once_init_stdthread();
 
     if (!(param.event_init = CreateEventA(NULL, FALSE, 0, NULL))) {
         return thrd_error;
@@ -213,8 +293,9 @@ int __cdecl thrd_equal(thrd_t lhs, thrd_t rhs)
 NORETURN
 void __cdecl thrd_exit(int res)
 {
-    finalize_tls_data(THREAD_DATA);
-    
+    struct _tld *tdata = THREAD_DATA;
+    finalize_tls_data(tdata);
+    destroy_thread_event(tdata);
     _endthreadex((DWORD)res);
 
     // To prevent compiler warning since _endthreadex not marked as noreturn
@@ -272,40 +353,6 @@ void __cdecl thrd_yield(void)
 #endif
 }
 
-//int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
-//{
-//    unsigned key;
-//
-//    key = TlsAlloc();
-//    // TODO: support TLS destructors
-//    (void)destructor;
-//    if (key == TLS_OUT_OF_INDEXES) {
-//        return thrd_error;
-//    }
-//    tss_key->_key = key;
-//    return thrd_success;
-//}
-//
-//int __cdecl tss_delete(tss_t tss_id)
-//{
-//    return TlsFree(tss_id._key) ? thrd_success : thrd_error;
-//}
-//
-//int __cdecl tss_set(tss_t tss_id, void *val)
-//{
-//    return TlsSetValue(tss_id._key, val) ? thrd_success : thrd_error;
-//}
-//
-//void* __cdecl tss_get(tss_t tss_key)
-//{
-//    void *result = TlsGetValue(tss_key._key);
-//    if (!result && GetLastError() != ERROR_SUCCESS) {
-//        fprintf(stderr, "stdthrd: TlsGetValue failed.\n");
-//    }
-//    return result;
-//}
-
-
 #elif defined(__OS2__)
 
 extern unsigned     __MaxThreads;
@@ -324,15 +371,13 @@ static mtx_t        mtx_detach;
 static cnd_t        cnd_detach;
 static thrd_t       detach_thread;
 static struct _tld  *thread_data_list = NULL;
+static ULONG        ThrdInitSem = 0;
+static ULONG        ThrdSem = 0;
 
 #if defined(_M_I86)
 static void         *ThrdStack;
 static void         *detach_thread_stack;
-static ULONG        ThrdSem = 0;
-static ULONG        ThrdInitSem = 0;
 #else
-static HMTX         ThrdSem = 0;
-static HEV          ThrdInitSem = 0;
 struct _tld*        *CurThrdData;
 #endif
 
@@ -366,7 +411,7 @@ static void wait_for_thread_to_die(struct _tld *tdata)
     tdata->thread_state |= tstate_die;
     
     // We need to suspend thread creation before we signal
-    acquire_mutex_noint(&ThrdSem, -1);
+    acquire_mutex(&ThrdSem, -1);
     cnd_signal(&tdata->cnd_joined);
     mtx_unlock(&tdata->mtx_joined);
 #if defined(_M_I86)
@@ -414,14 +459,8 @@ static int __cdecl detach_thrdproc(void *arg)
     }
 }
 
-#if defined(_M_I86)
-static void PASCAL FAR done_stdthread(USHORT termCode)
-#else
-static VOID APIENTRY done_stdthread(ULONG termCode)
-#endif
+static void done_stdthread(void)
 {
-    (void)termCode;
-
     mtx_destroy(&mtx_detach);
     cnd_destroy(&cnd_detach);
 
@@ -435,91 +474,13 @@ static VOID APIENTRY done_stdthread(ULONG termCode)
 #if defined(_M_I86)
     free(detach_thread_stack);
 #else
-    DosCloseEventSem(tdata_main.thread_event);
     DosFreeThreadLocalMemory((PULONG)CurThrdData);
     CurThrdData = NULL;
 #endif
     _nfree(ThrdData);
 
     mtx_destroy(&mtx_tls);
-    DosExitList(EXLST_EXIT, NULL);
-}
-
-void __init_stdthread(void)
-{
-#if !defined(_M_I86)
-    if (NO_ERROR != DosCreateMutexSem(NULL, &ThrdSem, 0, TRUE)) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to create thread mutex\n");
-        abort();
-    }
-    if (NO_ERROR != DosCreateEventSem(NULL, &ThrdInitSem, 0, FALSE)) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to create thread event\n");
-        abort();
-    }
-#else
-    acquire_mutex_noint(&ThrdSem, 1);
-#endif
-    ThrdData = _ncalloc(__MaxThreads, sizeof(*ThrdData));
-    if (!ThrdData) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to allocate thread data buffer\n");
-        abort();
-    }
-
-    memset(&tdata_main, 0, sizeof(tdata_main));
-
-    if (!alloc_tls_data(&tdata_main)) {
-        abort();
-    }
-
-    tdata_main.thr._thr_data = &tdata_main;
-    tdata_main.thr._thr_id = *_threadid;
-    tdata_main.thread_state = tstate_running;
-#if !defined(_M_I86)
-    if (NO_ERROR != DosCreateEventSem(NULL, &tdata_main.thread_event, 0, FALSE)) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to create main thread event\n");
-        abort();
-    }
-    if (NO_ERROR != DosAllocThreadLocalMemory(1, (PULONG*)&CurThrdData)) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to allocate thread local memory\n");
-        abort();
-    }
-#endif
-    THREAD_DATA = &tdata_main;
-
-    ThrdData[tdata_main.thr._thr_id] = &tdata_main;
-
-    mtx_init(&mtx_tls, mtx_plain);
-
-    cnd_init(&tdata_main.cnd_exited);
-    cnd_init(&tdata_main.cnd_joined);
-    mtx_init(&tdata_main.mtx_exit, mtx_plain);
-    mtx_init(&tdata_main.mtx_joined, mtx_plain);
-
-    mtx_init(&mtx_detach, mtx_plain);
-    cnd_init(&cnd_detach);
-#if defined(_M_I86)
-    if (!(detach_thread_stack = malloc(4096))) {
-        fprintf(stderr, "FATAL: stdthrd: Failed to allocate detach-thread stack.\n");
-        abort();
-    }
-#endif
-    release_mutex(&ThrdSem);
-
-    if (_thrd_create_ex(&detach_thread, detach_thrdproc, NULL,
-#if defined(_M_I86)
-        detach_thread_stack,
-#else
-        NULL,
-#endif
-        __ThreadStackSize) != thrd_success) {
-#if defined(_M_I86)
-        free(detach_thread_stack);
-#endif
-        fprintf(stderr, "FATAL: stdthrd: Failed to create detach-thread.\n");
-        abort();
-    }
-
-    DosExitList(EXLST_ADD, done_stdthread);
+    destroy_thread_event(&tdata_main);
 }
 
 static
@@ -538,15 +499,14 @@ threadproc(void *arglist)
 
 #if defined(_M_I86)   
     tdata.dyn_stack = ThrdStack;
-#else
-    if (NO_ERROR != DosCreateEventSem(NULL, &tdata.thread_event, 0, FALSE)) {
+#endif
+    if (!create_thread_event(&tdata)) {
         Thrd._thr_id = -1;
         fprintf(stderr, "stdthrd: Failed to create thread event\n");
         free(tdata.tls_data);
         post_event(&ThrdInitSem);
         _endthread();
     }
-#endif
     tdata.thr._thr_data = &tdata;
     tdata.thr._thr_id = *_threadid;
     tdata.thread_state = tstate_running;
@@ -556,24 +516,22 @@ threadproc(void *arglist)
     Thrd._thr_id = tdata.thr._thr_id;
     ThrdData[tdata.thr._thr_id] = &tdata;
 
-    cnd_init(&tdata.cnd_exited);
-    cnd_init(&tdata.cnd_joined);
-    mtx_init(&tdata.mtx_exit, mtx_plain);
-    mtx_init(&tdata.mtx_joined, mtx_plain);
+    _cnd_init(&tdata.cnd_exited);
+    _cnd_init(&tdata.cnd_joined);
+    _mtx_init(&tdata.mtx_exit, mtx_plain);
+    _mtx_init(&tdata.mtx_joined, mtx_plain);
 
     post_event(&ThrdInitSem);
     // run the caller's thread proc and exit thread
     thrd_exit(p_func(arglist));
 }
 
-int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
+static int __cdecl __thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
 {
     void *l_stack;
     int result, create_result;
 
-    call_once_init_stdthread;
-
-    acquire_mutex_noint(&ThrdSem, -1);
+    acquire_mutex(&ThrdSem, -1);
 
 #if defined(_M_I86)
     if (!stack_bottom) {
@@ -613,7 +571,7 @@ int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *sta
         goto finalize_and_return;
     }
 
-    wait_event_noint(&ThrdInitSem, -1);
+    wait_event(&ThrdInitSem, -1);
     if (Thrd._thr_id != -1) {
         *thr = Thrd;
         result = thrd_success;
@@ -626,6 +584,92 @@ finalize_and_return:
     return result;
 }
 
+void __init_stdthread(void)
+{
+#if !defined(_M_I86)
+    if (NO_ERROR != DosCreateMutexSem(NULL, &ThrdSem, 0, TRUE)) {
+        fprintf(stderr, "FATAL: stdthrd: Failed to create thread mutex\n");
+        abort();
+    }
+    if (NO_ERROR != DosCreateEventSem(NULL, &ThrdInitSem, 0, FALSE)) {
+        fprintf(stderr, "FATAL: stdthrd: Failed to create thread event\n");
+        abort();
+    }
+#else
+    acquire_mutex(&ThrdSem, 1);
+#endif
+    ThrdData = _ncalloc(__MaxThreads, sizeof(*ThrdData));
+    if (!ThrdData) {
+        fprintf(stderr, "FATAL: stdthrd: Failed to allocate thread data buffer\n");
+        abort();
+    }
+
+    memset(&tdata_main, 0, sizeof(tdata_main));
+
+    if (!create_thread_event(&tdata_main)) {
+        abort();
+    }
+
+    if (!alloc_tls_data(&tdata_main)) {
+        destroy_thread_event(&tdata_main);
+        abort();
+    }
+
+    tdata_main.thr._thr_data = &tdata_main;
+    tdata_main.thr._thr_id = *_threadid;
+    tdata_main.thread_state = tstate_running;
+#if !defined(_M_I86)
+    if (NO_ERROR != DosAllocThreadLocalMemory(1, (PULONG*)&CurThrdData)) {
+        fprintf(stderr, "FATAL: stdthrd: Failed to allocate thread local memory\n");
+        abort();
+    }
+#endif
+    THREAD_DATA = &tdata_main;
+
+    ThrdData[tdata_main.thr._thr_id] = &tdata_main;
+
+    _mtx_init(&mtx_tls, mtx_plain);
+
+    _cnd_init(&tdata_main.cnd_exited);
+    _cnd_init(&tdata_main.cnd_joined);
+    _mtx_init(&tdata_main.mtx_exit, mtx_plain);
+    _mtx_init(&tdata_main.mtx_joined, mtx_plain);
+
+    _mtx_init(&mtx_detach, mtx_plain);
+    _cnd_init(&cnd_detach);
+#if defined(_M_I86)
+    if (!(detach_thread_stack = malloc(4096))) {
+        fprintf(stderr, "FATAL: stdthrd: Failed to allocate detach-thread stack.\n");
+        abort();
+    }
+#endif
+    release_mutex(&ThrdSem);
+
+    if (__thrd_create_ex(&detach_thread, detach_thrdproc, NULL,
+#if defined(_M_I86)
+        detach_thread_stack,
+#else
+        NULL,
+#endif
+        __ThreadStackSize) != thrd_success) {
+#if defined(_M_I86)
+        free(detach_thread_stack);
+#endif
+        fprintf(stderr, "FATAL: stdthrd: Failed to create detach-thread.\n");
+        abort();
+    }
+
+    if (atexit(done_stdthread)) {
+        fprintf(stderr, "FATAL: stdthrd: atexit failed.\n");
+        abort();
+    }
+}
+
+int __cdecl _thrd_create_ex(thrd_t *thr, thrd_start_t func, void *arg, void *stack_bottom, size_t stack_size)
+{
+    call_once_init_stdthread();
+    return __thrd_create_ex(thr, func, arg, stack_bottom, stack_size);
+}
 
 int __cdecl thrd_equal(thrd_t lhs, thrd_t rhs)
 {
@@ -675,9 +719,8 @@ void __cdecl thrd_exit(int res)
     mtx_destroy(&tdata->mtx_joined);
 
     finalize_tls_data(tdata);
-
+    destroy_thread_event(tdata);
 #if !defined(_M_I86)
-    DosCloseEventSem(tdata->thread_event);
     THREAD_DATA = NULL;
     tdata->thr._thr_data = NULL;
     ThrdData[tdata->thr._thr_id] = NULL;
@@ -691,7 +734,7 @@ int __cdecl thrd_detach(thrd_t thr)
     struct _tld *tdata;
     int result;
 
-    acquire_mutex_noint(&ThrdSem, -1);
+    acquire_mutex(&ThrdSem, -1);
     if (!is_thrd_valid(thr)) {
         release_mutex(&ThrdSem);
         return thrd_error;
@@ -718,7 +761,7 @@ int __cdecl thrd_join(thrd_t thr, int *res)
 {
     struct _tld *tdata;
 
-    acquire_mutex_noint(&ThrdSem, -1);
+    acquire_mutex(&ThrdSem, -1);
     if (!is_thrd_valid(thr)) {
         release_mutex(&ThrdSem);
         return thrd_error;
@@ -778,8 +821,8 @@ int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
 {
     unsigned i;
     int result = thrd_error;
-
-    call_once_init_stdthread;
+ 
+    call_once_init_stdthread();
 
     mtx_lock(&mtx_tls);
     for (i = 0; i <= _MAX_TLS_KEY; i++) {
@@ -843,10 +886,20 @@ thrd_t __cdecl thrd_current(void)
 
 void __cdecl call_once(once_flag *_flag, void(*_func)(void))
 {
-    __call_once(_flag, _func);    
+    int cur = 0;
+    if (atomic_compare_exchange_strong(_flag, &cur, -1)) {
+        _func();
+        atomic_store(_flag, 1);
+    }
+    else if (cur < 0) {
+        while (atomic_load(_flag) < 0) {
+#if defined(_WIN32)
+            Sleep(0);
+#elif defined(__OS2__)
+            DosSleep(0);
+#else
+            _cpu_pause();
+#endif
+        }
+    }
 }
-
-//void __cdecl _thrd_initlib(void)
-//{
-//    call_once_init_stdthread;
-//}

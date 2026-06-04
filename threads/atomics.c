@@ -139,6 +139,47 @@ __atomic_compare_exchange_impl(volatile atomic_int *obj, int *expected, const in
     return result;
 }
 
+signed char __cdecl
+__atomic_compare_exchange_ptr_impl(volatile atomic_ptr *obj, void **expected, const void *desired)
+{
+    signed char result = 1;
+    __asm {
+        lds si, expected
+        mov cx, word ptr [desired]
+        mov ax, SEG AtomicLockState
+        mov bx, OFFSET AtomicLockState
+        mov es, ax
+
+        ACQUIRE_SPINLOCK(es:[bx])
+
+        les di, obj
+        mov ax, [si]
+        mov dx, es:[di]
+        cmp dx, ax
+        jne not_equal
+        mov ax, [si+2]
+        mov dx, es:[di+2]
+        cmp dx, ax
+        jne not_equal
+        mov es:[di], cx
+        mov cx, word ptr [desired+2]
+        mov es:[di+2], cx
+        jmp done
+      not_equal:
+        mov dx, es:[di]
+        mov [si], dx
+        mov dx, es:[di+2]
+        mov [si+2], dx
+        mov result, 0
+      done:
+
+        mov si, SEG AtomicLockState
+        mov es, si
+        RELEASE_SPINLOCK(es:[bx])
+    }
+    return result;
+}
+
 void __cdecl
 __atomic_store_impl(volatile atomic_int *obj, const int value)
 {
@@ -157,8 +198,28 @@ __atomic_store_impl(volatile atomic_int *obj, const int value)
     }
 }
 
+void __cdecl
+__atomic_store_ptr_impl(volatile atomic_ptr *obj, const void *value)
+{
+    __asm {
+        lds si, obj
+        mov ax, SEG AtomicLockState
+        mov bx, OFFSET AtomicLockState
+        mov es, ax
+
+        ACQUIRE_SPINLOCK(es:[bx])
+
+        mov cx, word ptr [value]
+        mov [si], cx
+        mov cx, word ptr [value+2]
+        mov [si+2], cx
+
+        RELEASE_SPINLOCK(es:[bx])
+    }
+}
+
 int __cdecl
-__atomic_load_impl(const volatile atomic_int *obj)
+__atomic_load_impl(volatile atomic_int *obj)
 {
     int result = 0;
     __asm {
@@ -176,6 +237,29 @@ __atomic_load_impl(const volatile atomic_int *obj)
     }
     return result;
 }
+
+void* __cdecl
+__atomic_load_ptr_impl(volatile atomic_ptr *obj)
+{
+    void* result = 0;
+    __asm {
+        lds si, obj
+        mov ax, SEG AtomicLockState
+        mov bx, OFFSET AtomicLockState
+        mov es, ax
+
+        ACQUIRE_SPINLOCK(es:[bx])
+
+        mov ax, [si]
+        mov word ptr [result], ax
+        mov ax, [si+2]
+        mov word ptr [result+2], ax
+
+        RELEASE_SPINLOCK(es:[bx])
+    }
+    return result;
+}
+
 
 int __cdecl
 __atomic_exchange_impl(volatile atomic_int *obj, const int value)
@@ -198,6 +282,33 @@ __atomic_exchange_impl(volatile atomic_int *obj, const int value)
     }
     return result;
 }
+
+void* __cdecl
+__atomic_exchange_ptr_impl(volatile atomic_ptr *obj, const void *value)
+{
+    void *result = (void*)0;
+    __asm {
+        lds si, obj
+        mov cx, word ptr [value]
+        mov dx, word ptr [value+2]
+        mov ax, SEG AtomicLockState
+        mov bx, OFFSET AtomicLockState
+        mov es, ax
+
+        ACQUIRE_SPINLOCK(es:[bx])
+
+        mov ax, [si]
+        mov [si], cx
+        mov word ptr [result], ax
+        mov ax, [si+2]
+        mov [si+2], dx
+        mov word ptr [result+2], ax
+
+        RELEASE_SPINLOCK(es:[bx])
+    }
+    return result;
+}
+
 
 int __cdecl
 __atomic_add_impl(volatile atomic_int *obj, const int value)
@@ -375,6 +486,33 @@ __atomic_compare_exchange_impl(volatile atomic_int *obj, int *expected, const in
     return result;
 }
 
+signed char __cdecl
+__atomic_compare_exchange_ptr_impl(volatile atomic_ptr *obj, void **expected, const void *desired)
+{
+    signed char result = 1;
+    __asm {
+        mov esi, expected
+        mov ecx, desired
+        mov ebx, OFFSET AtomicLockState
+
+        ACQUIRE_SPINLOCK([ebx])
+
+        mov edi, obj
+        mov eax, [esi]
+        mov edx, [edi]
+        cmp edx, eax
+        jne not_equal
+        mov [edi], ecx
+        jmp done
+      not_equal:
+        mov [esi], edx
+        mov result, 0
+      done:
+        RELEASE_SPINLOCK([ebx])
+    }
+    return result;
+}
+
 void __cdecl
 __atomic_store_impl(volatile atomic_int *obj, const int value)
 {
@@ -391,10 +529,44 @@ __atomic_store_impl(volatile atomic_int *obj, const int value)
     }
 }
 
+void __cdecl
+__atomic_store_ptr_impl(volatile atomic_ptr *obj, const void *value)
+{
+    __asm {
+        mov esi, obj
+        mov ecx, value
+        mov ebx, OFFSET AtomicLockState
+
+        ACQUIRE_SPINLOCK([ebx])
+
+        mov [esi], ecx
+
+        RELEASE_SPINLOCK([ebx])
+    }
+}
+
 int __cdecl
-__atomic_load_impl(const volatile atomic_int *obj)
+__atomic_load_impl(volatile atomic_int *obj)
 {
     int result = 0;
+    __asm {
+        mov esi, obj
+        mov ebx, OFFSET AtomicLockState
+
+        ACQUIRE_SPINLOCK([ebx])
+
+        mov eax, [esi]
+        mov result, eax
+
+        RELEASE_SPINLOCK([ebx])
+    }
+    return result;
+}
+
+void* __cdecl
+__atomic_load_ptr_impl(volatile atomic_ptr *obj)
+{
+    void *result = (void*)0;
     __asm {
         mov esi, obj
         mov ebx, OFFSET AtomicLockState
@@ -413,6 +585,26 @@ int __cdecl
 __atomic_exchange_impl(volatile atomic_int *obj, const int value)
 {
     int result = 0;
+    __asm {
+        mov esi, obj
+        mov ecx, value
+        mov ebx, OFFSET AtomicLockState
+
+        ACQUIRE_SPINLOCK([ebx])
+
+        mov eax, [esi]
+        mov [esi], ecx
+        mov result, eax
+
+        RELEASE_SPINLOCK([ebx])
+    }
+    return result;
+}
+
+void* __cdecl
+__atomic_exchange_ptr_impl(volatile atomic_ptr *obj, const void *value)
+{
+    void* result = (void*)0;
     __asm {
         mov esi, obj
         mov ecx, value
