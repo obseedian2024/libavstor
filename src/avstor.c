@@ -325,13 +325,6 @@ typedef struct AvCnd {
 #endif
 } AvCnd;
 
-// quick & dirty upgradable non-recursive read-write lock using condition variables
-typedef struct rwl_t {
-    AvMutex             mtx;
-    AvCnd               cv;         // Shared and exlusive locks wait on this cv
-    AvCnd               cv_upgr;    // Upgrader waits on this cv
-    int                 lock;
-} rwl_t;
 #endif
 
 // Since nodes in 64-bit files are also 4-byte aligned, we use this
@@ -434,9 +427,6 @@ struct AvPage {
 };
 
 typedef struct CacheRow {
-#ifdef AVSTOR_CONFIG_THREAD_SAFE
-    rwl_t               lock;
-#endif
     uint32_t            load_count;
     unsigned            capacity;
     CacheItem*          items;
@@ -462,10 +452,14 @@ typedef struct BufferPool {
 
 struct avstor {
 #if defined(AVSTOR_CONFIG_THREAD_SAFE)
-    rwl_t               global_rwl;
 #if defined(IO_REQUIRES_SYNC)
     AvMutex             io_mtx;
 #endif
+    AvMutex             mtx;
+    AvCnd               cv;
+    AvCnd               cv_upgr;
+    thrd_t              owner;
+    int                 lock;
 #endif
     int                 file;
     int                 oflags;
@@ -563,6 +557,9 @@ static const char* MSG_OUT_OF_MEMORY                = "Out of memory";
 static const char* MSG_BACKTRACE_OVERFLOW           = "Backtrace stack overflow";
 static const char* MSG_BACKTRACE_UNDERFLOW          = "Backtrace stack underflow";
 static const char* MSG_INVALID_ATTRIBUTE            = "Invalid attribute";
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+static const char* MSG_NOT_OWNER                    = "Thread does not own exclusive lock";
+#endif
 
 #if defined(AVSTOR_CONFIG_FILE_64BIT)
 static const NodeRef    NODEREF_NULL = { { 0, 0 } };
@@ -822,129 +819,199 @@ static __inline int avcnd_broadcast(AvCnd* avcv)
     return cnd_broadcast(&avcv->cv) == thrd_success;
 }
 #endif
-static int rwl_init(rwl_t *rwl)
+
+static int db_lock_shared(avstor *db)
 {
-    rwl->lock = 0;
-    if (avcnd_init(&rwl->cv)) {
-        if (!avcnd_init(&rwl->cv_upgr)) {
-            goto err_cv_upgr;
+    // Shared lock can be acquired if nobody holds an exclusive lock and
+    // no shared lock is trying to upgrade
+    while (db->lock < 0 || (db->lock & 1)) {
+        if (!avcnd_wait(&db->cv, &db->mtx)) {
+            RETURN(AVSTOR_INTERNAL, "avcnd_wait failed");
         }
-        if (!avmtx_init(&rwl->mtx)) {
-            goto err_mtx;
+    }
+    db->lock += 2;  // Increase shared lock count
+    return AVSTOR_OK;
+}
+
+static int db_lock_exclusive(avstor *db)
+{
+    if (thrd_equal(db->owner, thrd_current())) {
+        // We already own an exclusive lock so just return OK
+        return AVSTOR_OK;
+    }
+
+    // Exclusive lock can only be obtained if no locks are being held
+    while (db->lock != 0) {
+        if (!avcnd_wait(&db->cv, &db->mtx)) {
+            RETURN(AVSTOR_INTERNAL, "avcnd_wait failed");
         }
-        return 1;
-err_mtx:
-        avcnd_destroy(&rwl->cv_upgr);
-err_cv_upgr:
-        avcnd_destroy(&rwl->cv);
     }
-    return 0;
+    db->lock = -2;
+    db->owner = thrd_current();
+    return AVSTOR_OK;
 }
 
-static void rwl_destroy(rwl_t *rwl)
+//
+// Attempt to upgrade a shared lock to exclusive.
+// If a shared or exclusive lock has not already been obtained, behavior is
+// undefined.
+//
+static int db_lock_upgrade(avstor *db)
 {
-    avcnd_destroy(&rwl->cv);
-    avcnd_destroy(&rwl->cv_upgr);
-    avmtx_destroy(&rwl->mtx);
-    rwl->lock = 0;
-}
-
-static void rwl_lock_shared(rwl_t *rwl)
-{
-    avmtx_lock(&rwl->mtx);
-    while (rwl->lock < 0 || (rwl->lock & 1)) {
-        avcnd_wait(&rwl->cv, &rwl->mtx);
+    // Someone is already trying to upgrade
+    if (db->lock & 1) {
+        RETURN(AVSTOR_DEADLOCK, "Would deadlock");
     }
-    rwl->lock += 2;
-    avmtx_unlock(&rwl->mtx);
-}
 
-static void rwl_lock_exclusive(rwl_t *rwl)
-{
-    avmtx_lock(&rwl->mtx);
-    while (rwl->lock != 0) {
-        avcnd_wait(&rwl->cv, &rwl->mtx);
-    }
-    rwl->lock = -2;
-    avmtx_unlock(&rwl->mtx);
-}
-
-static int rwl_upgrade(rwl_t *rwl)
-{
-    int lock;
-    int result = 0;
-    avmtx_lock(&rwl->mtx);
-    if (!(rwl->lock & 1)) {
-        lock = rwl->lock & ~1;
-        while (lock != 2 && lock > 0) {
-            rwl->lock |= 1;
-            avcnd_wait(&rwl->cv_upgr, &rwl->mtx);
-            lock = rwl->lock & ~1;
+    // Someone already has an exclusive lock
+    if (db->lock < 0) {        
+        if (thrd_equal(db->owner, thrd_current())) {
+            // That somneone is us, so it's ok
+            return AVSTOR_OK;
         }
-        rwl->lock = (lock == 2) ? -2 : lock;
-        result = 1;
+        else {
+            // Other thread has exclusive lock, we can't upgrade that
+            RETURN(AVSTOR_INVOPER, "Not owner");
+        }
     }
-    avmtx_unlock(&rwl->mtx);
+    if (db->lock == 0) {
+        // Can't upgrade if we don't have a shared lock
+        RETURN(AVSTOR_INVOPER, "Not locked");
+    }
+
+    // Lock can only be upgraded if there is exactly one shared lock
+    // (assumed to be the current thread)
+    while (db->lock != 2) {
+        db->lock |= 1; // Set upgrade lock bit
+        if (!avcnd_wait(&db->cv_upgr, &db->mtx)) {
+            RETURN(AVSTOR_INTERNAL, "avcnd_wait failed");
+        }
+        db->lock &= ~1;
+    }
+    db->lock = -2;
+    db->owner = thrd_current();
+
+    return AVSTOR_OK;
+}
+
+static int db_lock_release(avstor *db)
+{
+    if (db->lock > 0) {        
+        db->lock -= 2;   // Releasing a shared lock
+        
+        if (db->lock == 3) {
+            // One shared lock remains, that is trying to upgrade, therefore
+            // we must release that thread
+            if (!avcnd_signal(&db->cv_upgr)) {
+                RETURN(AVSTOR_INTERNAL, "avcnd_signal failed");
+            }
+        }
+        else if (db->lock == 0) {
+            // All shared locks released. But there might be multiple 
+            // threads waiting to obtain an exclusive lock. So, release
+            // one of them.
+            if (!avcnd_signal(&db->cv)) {
+                RETURN(AVSTOR_INTERNAL, "avcnd_signal failed");
+            }
+        }
+    }
+    else if (db->lock < 0) {
+        // Released an exclusive lock. We can release all threads in 
+        // case there are multiple shared locks waiting, they can proceed
+        // in parallel.
+        db->lock = 0;
+        memset(&db->owner, 0, sizeof(db->owner));
+        if (!avcnd_broadcast(&db->cv)) {
+            RETURN(AVSTOR_INTERNAL, "avcnd_broadcast failed");
+        }
+    }
+    else {
+        RETURN(AVSTOR_INVOPER, "Not locked");
+    }
+
+    return AVSTOR_OK;
+}
+
+static int db_can_read(avstor *db)
+{
+    return db->lock >= 0 || thrd_equal(db->owner, thrd_current());
+}
+
+static int db_can_write(avstor *db)
+{
+    return thrd_equal(db->owner, thrd_current());
+}
+
+int AVCALL avstor_lock_acquire(avstor *db, int ltype)
+{
+    int result;
+    CHECK_PARAM(db);
+
+    avmtx_lock(&db->mtx);
+    switch (ltype) {
+    case AVSTOR_LOCK_SHARED:
+        result = db_lock_shared(db);
+        break;
+    case AVSTOR_LOCK_EXCLUSIVE:
+        result = db_lock_exclusive(db);
+        break;
+    default:
+        result = AVSTOR_PARAM;
+    }
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
-static void rwl_release(rwl_t *rwl)
+int AVCALL avstor_lock_release(avstor *db)
 {
-    int lock;
-    avmtx_lock(&rwl->mtx);
-    lock = rwl->lock;
-    if (lock > 1) {
-        rwl->lock = lock - 2;
-    }
-    else if ((lock & ~1) <= -2) {
-        rwl->lock = lock + 2;
-    }
-    else {
-        goto unlock_and_exit;
-    }
+    int result;
+    CHECK_PARAM(db);
 
-    if (rwl->lock == 3) {
-        avcnd_signal(&rwl->cv_upgr);
-    }
-    else if ((lock & ~1) == -2 && (rwl->lock & ~1) == 0) {
-        avmtx_unlock(&rwl->mtx);
-        avcnd_broadcast(&rwl->cv);
-        return;
-    }
-unlock_and_exit:
-    avmtx_unlock(&rwl->mtx);
+    avmtx_lock(&db->mtx);
+    result = db_lock_release(db);
+    avmtx_unlock(&db->mtx);
+
+    return result;
 }
 
-static int rwl_upgrade_or_lock_exclusive(rwl_t *rwl)
+int AVCALL avstor_lock_upgrade(avstor *db)
 {
-    if (rwl_upgrade(rwl)) {
-        return 1;
-    }
-    rwl_release(rwl);
-    rwl_lock_exclusive(rwl);
-    return 0;
+    int result;
+    CHECK_PARAM(db);
+
+    avmtx_lock(&db->mtx);
+    result = db_lock_upgrade(db);
+    avmtx_unlock(&db->mtx);
+
+    return result;
 }
 
-static int rwl_upgrade_or_release(rwl_t *rwl)
-{
-    if (rwl_upgrade(rwl)) {
-        return 1;
-    }
-    rwl_release(rwl);
-    return 0;
-}
+#define CHECK_CAN_WRITE(db) \
+    do { \
+        if (!db_can_write(db)) { \
+            avmtx_unlock(&(db)->mtx); \
+            RETURN(AVSTOR_INVOPER, MSG_NOT_OWNER); \
+        } \
+    } while (0)
+
+#define CHECK_CAN_READ(db) \
+    do { \
+        if (!db_can_read(db)) { \
+            avmtx_unlock(&(db)->mtx); \
+            RETURN(AVSTOR_INVOPER, MSG_NOT_OWNER); \
+        } \
+    } while (0)
+
 #else
-#define rwl_init(rwl) (1)
-#define rwl_destroy(rwl) ((void)0)
-#define rwl_lock_shared(rwl) ((void)0)
-#define rwl_lock_exclusive(rwl) ((void)0)
-#define rwl_release(rwl) ((void)0)
-#define rwl_upgrade_or_lock_exclusive(rwl) (1)
-#define rwl_upgrade_or_release(rwl) (1)
+
 #define avmtx_init(mtx) (1)
 #define avmtx_destroy(mtx) ((void)0)
 #define avmtx_lock(mtx) ((void)0)
 #define avmtx_unlock(mtx) ((void)0)
+#define avstor_lock_acquire(db, ltype) (AVSTOR_OK)
+#define CHECK_CAN_WRITE(db) ((void)0)
+#define CHECK_CAN_READ(db) ((void)0)
 
 #endif
 
@@ -1328,6 +1395,9 @@ static __inline void update_page_checksum(AvPage *page)
     page->checksum = compute_page_checksum(page);
 }
 
+// 
+// db->mtx must be locked on entry
+//
 static void avstor_destroy(avstor *db)
 {
     PageCache *cache = &db->cache;
@@ -1338,7 +1408,6 @@ static void avstor_destroy(avstor *db)
                 free(cache->rows[i].items);
                 cache->rows[i].items = NULL;
             }
-            rwl_destroy(&cache->rows[i].lock);
         }
         free(cache->rows);
         cache->rows = NULL;
@@ -1349,9 +1418,15 @@ static void avstor_destroy(avstor *db)
     }
     db->cache.old_header = NULL;
     bpool_destroy(&db->bpool);
-    rwl_destroy(&db->global_rwl);
+
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
 #if defined(IO_REQUIRES_SYNC)
     avmtx_destroy(&db->io_mtx);
+#endif
+    avmtx_unlock(&db->mtx);
+    avmtx_destroy(&db->mtx);
+    avcnd_destroy(&db->cv);
+    avcnd_destroy(&db->cv_upgr);
 #endif
     free(db);
 }
@@ -1391,13 +1466,21 @@ static int avstor_init(avstor **pdb, unsigned szcache)
     cache->l2_len = db->l2_size / (KB_PER_PAGE * L2_ASSOC);
     cache->l2_mask = cache->l2_len - 1;
 
-    if (!rwl_init(&db->global_rwl)) {
-        goto err_rwl_init;
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+    if (!avmtx_init(&db->mtx)) {
+        goto err_mtx_init;
+    }
+    if (!avcnd_init(&db->cv)) {
+        goto err_cv_init;
+    }
+    if (!avcnd_init(&db->cv_upgr)) {
+        goto err_cv_upgr_init;
     }
 #if defined(IO_REQUIRES_SYNC)
     if (!avmtx_init(&db->io_mtx)) {
         goto err_avmtx_init;
     }
+#endif
 #endif
 
     if (!bpool_init(&db->bpool, 512 / DEFAULT_BLOCK_SIZE)) {
@@ -1405,40 +1488,40 @@ static int avstor_init(avstor **pdb, unsigned szcache)
     }
 
     if (!(cache->header = avs_aligned_malloc(PAGE_SIZE * 2, PAGE_SIZE))) {
-        avstor_destroy(db);
-        return 0;
+        goto err_destroy;
     }
     cache->old_header = PTR(cache->header, PAGE_SIZE);
 
     if (!(cache->rows = calloc(cache->l2_len, sizeof(CacheRow)))) {
-        avstor_destroy(db);
-        return 0;
+        goto err_destroy;
     }
 
     for (i = 0; i < cache->l2_len; ++i) {
-#if defined(AVSTOR_CONFIG_THREAD_SAFE)
-        if (!rwl_init(&cache->rows[i].lock)) {
-            avstor_destroy(db);
-            return 0;
-        }
-#endif
         cache->rows[i].load_count = 1;
         cache->rows[i].capacity = L2_ASSOC;
         if (!(cache->rows[i].items = calloc(L2_ASSOC, sizeof(CacheItem)))) {
-            avstor_destroy(db);
-            return 0;
+            goto err_destroy;
         }
     }
     *pdb = db;
     return 1;
 err_bpool_init:
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
 #if defined(IO_REQUIRES_SYNC)
     avmtx_destroy(&db->io_mtx);
 err_avmtx_init:
 #endif
-    rwl_destroy(&db->global_rwl);
-err_rwl_init:
+err_cv_upgr_init:
+    avcnd_destroy(&db->cv);
+err_cv_init:
+    avmtx_destroy(&db->mtx);
+err_mtx_init:
+#endif
     free(db);
+    return 0;
+err_destroy:
+    avmtx_lock(&db->mtx);
+    avstor_destroy(db);
     return 0;
 }
 
@@ -1595,21 +1678,12 @@ static AvPage* cache_lookup(avstor *db, avstor_off page_num, int is_existing)
     assert(page_num != 0);
     row = &cache->rows[row_num];
 
-    do {
-        rwl_lock_shared(&row->lock);
-        if ((item = cache_lookup_scan_line(row, page_num, &first_empty_item))) {
-            // page was found in cache
+    if ((item = cache_lookup_scan_line(row, page_num, &first_empty_item))) {
+        // page was found in cache
+        lock_page(item->page);
+        return item->page;
+    }
 
-            // This is OK because nobody else has exclusive lock on row, i.e. not trying to evict
-            lock_page(item->page);
-
-            rwl_release(&row->lock);
-            return item->page;
-        }
-        // not in cache. Try to upgrade lock or retry lookup
-    } while (!rwl_upgrade_or_release(&row->lock));
-
-    // At this point the cache line is locked exclusively
     if (first_empty_item) {
         item = first_empty_item;
         if ((item->page = bpool_alloc_page(&db->bpool))) {
@@ -1624,16 +1698,13 @@ static AvPage* cache_lookup(avstor *db, avstor_off page_num, int is_existing)
         if (evict_result == evict_fail) {
             // This should almost never happen, maybe with exremely small cache sizes and many threads
             if (!(item = cache_line_realloc(db, row))) {
-                rwl_release(&row->lock);
                 THROW(AVSTOR_NOMEM, "cache_line_realloc failed: out of memory");
             }
         }
         else if (evict_result == evict_io_error) {
-            rwl_release(&row->lock);
             THROW(AVSTOR_IOERR, "IO error during cache page flush");
         }
         else if (evict_result == evict_must_flush) {
-            rwl_release(&row->lock);
             THROW(AVSTOR_ABORT, "Must flush but AUTOSAVE is off");
         }
     }
@@ -1645,7 +1716,6 @@ skip_evict:
         int result;
         // If looking for existing page, we can load it into the empty (or evicted) page
         if (AVSTOR_OK != (result = read_page(db, page_num, page))) {
-            rwl_release(&row->lock);
             THROW(result, "read_page() failed while reading page into cache");
         }
         item->load_time = row->load_count++;
@@ -1658,7 +1728,7 @@ skip_evict:
     }
     item->page_num = page_num;
     atomic_store_int_release(&page->lock_count, 1);
-    rwl_release(&row->lock);
+
     return page;
 }
 
@@ -2445,7 +2515,10 @@ int AVCALL avstor_commit(avstor *db, int flush)
     int result;
 
     CHECK_PARAM(db);
-    rwl_lock_exclusive(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
         cache = &db->cache;
@@ -2479,7 +2552,8 @@ int AVCALL avstor_commit(avstor *db, int flush)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -2537,7 +2611,6 @@ static void rollback(avstor *db)
 {
     unsigned row, col;
     PageCache *cache = &db->cache;
-    (void)rwl_upgrade_or_lock_exclusive(&db->global_rwl);
 
     for (row = 0; row < cache->l2_len; ++row) {
         CacheRow *line = &cache->rows[row];
@@ -2598,7 +2671,10 @@ int AVCALL avstor_create_key(const avstor_node *parent, const avstor_key *key, a
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
-    rwl_lock_exclusive(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
         AvStack st;
@@ -2646,7 +2722,8 @@ int AVCALL avstor_create_key(const avstor_node *parent, const avstor_key *key, a
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -2663,7 +2740,10 @@ static int create_var_value(const avstor_node *parent, const avstor_key *key,
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
-    rwl_lock_exclusive(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
         AvStack st;
@@ -2700,7 +2780,8 @@ static int create_var_value(const avstor_node *parent, const avstor_key *key,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -2738,7 +2819,10 @@ int AVCALL avstor_create_int32(const avstor_node *parent, const avstor_key *key,
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
-    rwl_lock_exclusive(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
         AvStack st;
@@ -2772,7 +2856,8 @@ int AVCALL avstor_create_int32(const avstor_node *parent, const avstor_key *key,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -2789,7 +2874,10 @@ static int create_fixed64_value(const avstor_node *parent, const avstor_key *key
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
-    rwl_lock_exclusive(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
         AvStack st;
@@ -2821,7 +2909,8 @@ static int create_fixed64_value(const avstor_node *parent, const avstor_key *key
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -2895,7 +2984,10 @@ int AVCALL avstor_create_link(const avstor_node *parent, const avstor_key *key,
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
-    rwl_lock_exclusive(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
         AvStack st;
@@ -2934,7 +3026,8 @@ int AVCALL avstor_create_link(const avstor_node *parent, const avstor_key *key,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -2944,7 +3037,10 @@ int AVCALL avstor_get_int32(const avstor_node *value, int32_t *out_val)
     int result;
 
     CHECK_PARAM(value && value->db && out_val);
-    rwl_lock_shared(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);
+    CHECK_CAN_READ(value->db);
+
     TRY(ex)
     {
         node = lock_valueref(value, AVSTOR_TYPE_INT32);
@@ -2959,7 +3055,8 @@ int AVCALL avstor_get_int32(const avstor_node *value, int32_t *out_val)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -2969,7 +3066,10 @@ static int get_fixed64_value(const avstor_node *value, unsigned type, int64_t *o
     int result;
 
     CHECK_PARAM(value && value->db && out_val);
-    rwl_lock_shared(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);
+    CHECK_CAN_READ(value->db);
+
     TRY(ex)
     {
         node = lock_valueref(value, type);
@@ -2984,7 +3084,8 @@ static int get_fixed64_value(const avstor_node *value, unsigned type, int64_t *o
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -3005,7 +3106,10 @@ static int get_var_value(const avstor_node* value, void* buf,
     int result;
 
     CHECK_PARAM(value && value->db && buf && out_bytes && out_length);
-    rwl_lock_shared(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);
+    CHECK_CAN_READ(value->db);
+
     TRY(ex)
     {
         const AvNodeData *ndata;
@@ -3025,7 +3129,8 @@ static int get_var_value(const avstor_node* value, void* buf,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -3061,7 +3166,10 @@ int AVCALL avstor_get_link(const avstor_node *value, avstor_node *out_target)
 
     CHECK_PARAM(value && value->db && out_target);
     db = value->db;
-    rwl_lock_shared(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_READ(db);
+
     TRY(ex)
     {
         node = lock_valueref(value, AVSTOR_TYPE_LINK);
@@ -3075,7 +3183,8 @@ int AVCALL avstor_get_link(const avstor_node *value, avstor_node *out_target)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -3086,7 +3195,10 @@ int AVCALL avstor_get_value(const avstor_node* value, void* buf,
     int result;
 
     CHECK_PARAM(value && value->db && buf && out_bytes && out_length);
-    rwl_lock_shared(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);
+    CHECK_CAN_READ(value->db);
+
     TRY(ex)
     {
         unsigned node_type, szdata, data_offset;
@@ -3125,7 +3237,8 @@ int AVCALL avstor_get_value(const avstor_node* value, void* buf,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -3135,7 +3248,10 @@ int AVCALL avstor_update_int32(const avstor_node *value, int32_t new_val)
     int result;
 
     CHECK_PARAM(value && value->db);
-    rwl_lock_exclusive(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);
+    CHECK_CAN_WRITE(value->db);
+
     TRY(ex)
     {
         node = lock_valueref(value, AVSTOR_TYPE_INT32);
@@ -3150,7 +3266,8 @@ int AVCALL avstor_update_int32(const avstor_node *value, int32_t new_val)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -3160,7 +3277,10 @@ static int update_fixed64_value(const avstor_node *value, unsigned type, int64_t
     int result;
 
     CHECK_PARAM(value && value->db);
-    rwl_lock_exclusive(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);    
+    CHECK_CAN_WRITE(value->db);
+
     TRY(ex)
     {
         node = lock_valueref(value, type);
@@ -3175,7 +3295,8 @@ static int update_fixed64_value(const avstor_node *value, unsigned type, int64_t
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -3198,7 +3319,10 @@ static int update_var_value(const avstor_node* value, const void* buf,
     int result;
 
     CHECK_PARAM(value && value->db && buf);
-    rwl_lock_exclusive(&value->db->global_rwl);
+
+    avmtx_lock(&value->db->mtx);
+    CHECK_CAN_WRITE(value->db);
+
     TRY(ex)
     {
         AvNodeData *ndata;
@@ -3221,7 +3345,8 @@ static int update_var_value(const avstor_node* value, const void* buf,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&value->db->global_rwl);
+    avmtx_unlock(&value->db->mtx);
+
     return result;
 }
 
@@ -3377,32 +3502,39 @@ int AVCALL avstor_open(avstor **pdb, const char* filename, unsigned szcache, int
     TRY(ex)
     {
         if (oflags & AVSTOR_OPEN_CREATE) {
-            db_create_file(db, filename, oflags);
+            if ((result = avstor_lock_acquire(db, AVSTOR_LOCK_EXCLUSIVE)) == AVSTOR_OK) {
+                db_create_file(db, filename, oflags);
+                *pdb = db;
+            }
         }
         else {
             db_open_file(db, filename, oflags);
+            *pdb = db;
+            result = AVSTOR_OK;
         }
-        *pdb = db;
-        result = AVSTOR_OK;
     }
     CATCH_ANY(ex)
     {
+        avmtx_lock(&db->mtx);
         avstor_destroy(db);
         result = ex.err;
     }
     END_TRY(ex);
+
     return result;
 }
 
 int AVCALL avstor_close(avstor *db)
 {
     CHECK_PARAM(db);
+
+    avmtx_lock(&db->mtx);
     if (db->file != AVSTOR_INVALID_HANDLE) {
         io_close(db->file);
         db->file = AVSTOR_INVALID_HANDLE;
     }
-
     avstor_destroy(db);
+
     return AVSTOR_OK;
 }
 
@@ -3419,7 +3551,10 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
-    rwl_lock_shared(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_READ(db);
+
     TRY(ex)
     {
         AvNode *out_node;
@@ -3453,7 +3588,8 @@ int AVCALL avstor_find(const avstor_node *parent, const avstor_key *key,
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -3469,7 +3605,9 @@ int AVCALL avstor_get_name(const avstor_node *value, avstor_key *key)
     CHECK_PARAM(value && value->db && key);
 #endif
 
-    rwl_lock_shared(&db->global_rwl);
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_READ(db);
+
     TRY(ex)
     {
         size_t szname;
@@ -3488,7 +3626,8 @@ int AVCALL avstor_get_name(const avstor_node *value, avstor_key *key)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -3504,7 +3643,9 @@ int AVCALL avstor_get_type(const avstor_node* value, unsigned *out_type)
     CHECK_PARAM(value && value->db && out_type);
 #endif
 
-    rwl_lock_shared(&db->global_rwl);
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_READ(db);
+
     TRY(ex)
     {
         node = lock_noderef(value);
@@ -3519,7 +3660,8 @@ int AVCALL avstor_get_type(const avstor_node* value, unsigned *out_type)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -3592,56 +3734,46 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
         RETURN(AVSTOR_PARAM, MSG_INVALID_PARAMETER);
     }
     db = parent->db;
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_WRITE(db);
+
     TRY(ex)
     {
-        while (1) {
-            rwl_lock_shared(&db->global_rwl);
-            if (parent->ref != 0) {
-                parent_node = lock_keyref(parent);
+        if (parent->ref != 0) {
+            parent_node = lock_keyref(parent);
+        }
+
+        if (isvalue) {
+            rootref = &get_node_data(parent_node)->vkey.value_root;
+        }
+        else {
+            rootref = !parent_node ? &db->cache.header->h.root : &get_node_data(parent_node)->vkey.subkey_root;
+        }
+        if ((node = find_node_with_backtrace(db, key, &st, rootref, &last_ref))) {
+            if (NODE_TYPE(node) == AVSTOR_TYPE_KEY) {
+                AvNodeData *ndata = get_node_data(node);
+                if (!is_nref_empty(ndata->vkey.subkey_root) || !is_nref_empty(ndata->vkey.value_root)) {
+                    THROW(AVSTOR_INVOPER, "Node has subkeys and/or values, unable to delete");
+                }
+            }
+            if (exists_link_to_node(db, node)) {
+                THROW(AVSTOR_INVOPER, "Node is a target of a link reference, unable to delete");
             }
 
-            if (isvalue) {
-                rootref = &get_node_data(parent_node)->vkey.value_root;
+            if (NODE_TYPE(node) == AVSTOR_TYPE_LINK) {
+                /* if deleting link, we must also delete backlink */
+                delete_backlink(db, node);
             }
-            else {
-                rootref = !parent_node ? &db->cache.header->h.root : &get_node_data(parent_node)->vkey.subkey_root;
-            }
-            if ((node = find_node_with_backtrace(db, key, &st, rootref, &last_ref))) {
-                if (NODE_TYPE(node) == AVSTOR_TYPE_KEY) {
-                    AvNodeData *ndata = get_node_data(node);
-                    if (!is_nref_empty(ndata->vkey.subkey_root) || !is_nref_empty(ndata->vkey.value_root)) {
-                        THROW(AVSTOR_INVOPER, "Node has subkeys and/or values, unable to delete");
-                    }
-                }
-                if (exists_link_to_node(db, node)) {
-                    THROW(AVSTOR_INVOPER, "Node is a target of a link reference, unable to delete");
-                }
-#ifdef AVSTOR_CONFIG_THREAD_SAFE
-                if (!rwl_upgrade(&db->global_rwl)) {
-                    unlock_ptr_checked(last_ref);
-                    unlock_ptr_checked(node);
-                    unlock_ptr_checked(parent_node);
-                    parent_node = NULL;
-                    node = NULL;
-                    last_ref = NULL;
-                    rwl_release(&db->global_rwl);
-                    continue;
-                }
-#endif
-                if (NODE_TYPE(node) == AVSTOR_TYPE_LINK) {
-                    /* if deleting link, we must also delete backlink */
-                    delete_backlink(db, node);
-                }
-                delete_node(db, node, &st);
-                unlock_ptr(node);
-                result = AVSTOR_OK;
-            }
-            else {
-                unlock_ptr_checked(last_ref);
-                result = AVSTOR_NOTFOUND;
-            }
-            break;
+            delete_node(db, node, &st);
+            unlock_ptr(node);
+            result = AVSTOR_OK;
         }
+        else {
+            unlock_ptr_checked(last_ref);
+            result = AVSTOR_NOTFOUND;
+        }
+
         unlock_ptr_checked(parent_node);
     }
     CATCH_ANY(ex)
@@ -3653,7 +3785,8 @@ int AVCALL avstor_delete(const avstor_node *parent, int flags, const avstor_key 
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -3769,7 +3902,10 @@ int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, c
     st->db = db;
     st->top = -1;
     st->flags = flags;
-    rwl_lock_shared(&db->global_rwl);
+
+    avmtx_lock(&db->mtx);
+    CHECK_CAN_READ(db);
+
     TRY(ex)
     {
         avstor_off ofs;
@@ -3812,7 +3948,8 @@ int AVCALL avstor_inorder_first(avstor_inorder *st, const avstor_node *parent, c
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&db->global_rwl);
+    avmtx_unlock(&db->mtx);
+
     return result;
 }
 
@@ -3826,7 +3963,10 @@ int AVCALL avstor_inorder_next(avstor_inorder *st, avstor_node *out_node)
         avstor_node_set(out_node, 0, st->db);
         return AVSTOR_NOTFOUND;
     }
-    rwl_lock_shared(&st->db->global_rwl);
+
+    avmtx_lock(&st->db->mtx);
+    CHECK_CAN_READ(st->db);
+
     TRY(ex)
     {
         avstor_off ofs;
@@ -3842,7 +3982,8 @@ int AVCALL avstor_inorder_next(avstor_inorder *st, avstor_node *out_node)
         result = ex.err;
     }
     END_TRY(ex);
-    rwl_release(&st->db->global_rwl);
+    avmtx_unlock(&st->db->mtx);
+
     return result;
 }
 
@@ -3865,6 +4006,9 @@ const char *AVCALL avstor_errtostr(int err_code)
     case AVSTOR_INVOPER:    return "AVSTOR_INVOPER";
     case AVSTOR_INTERNAL:   return "AVSTOR_INTERNAL";
     case AVSTOR_ABORT:      return "AVSTOR_ABORT";
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+    case AVSTOR_DEADLOCK:   return "AVSTOR_DEADLOCK";
+#endif
     default:                return "UNKNOWN";
     }
 }

@@ -38,6 +38,10 @@
 #include <stdint.h>
 
 #if defined(_WINDLL)
+// DLL should always be thread-safe
+#if !defined(AVSTOR_CONFIG_THREAD_SAFE)
+#define AVSTOR_CONFIG_THREAD_SAFE 1
+#endif
 #if defined(AVCALL)
 #undef AVCALL
 #endif
@@ -82,6 +86,9 @@ enum {
     AVSTOR_INVOPER,     // Invalid operation
     AVSTOR_INTERNAL,    // Internal error
     AVSTOR_ABORT        // Operation aborted
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+    ,AVSTOR_DEADLOCK    // Attempt to upgrade shared lock when someone else is already upgrading
+#endif
 };
 
 enum {
@@ -96,6 +103,13 @@ enum {
     AVSTOR_OPEN_SHARED      = 0x00000008,
     AVSTOR_OPEN_AUTOSAVE    = 0x00000100
 };
+
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+enum {
+    AVSTOR_LOCK_SHARED      = 0x00000001,
+    AVSTOR_LOCK_EXCLUSIVE   = 0x00000002
+};
+#endif
 
 typedef struct avstor   avstor;
 
@@ -208,6 +222,14 @@ const char *AVCALL avstor_errtostr(int err_code);
 int AVCALL avs_check_cache_consistency(avstor *db);
 
 int AVCALL avstor_thread_attach(void);
+
+#if defined(AVSTOR_CONFIG_THREAD_SAFE)
+int AVCALL avstor_lock_acquire(avstor *db, int ltype);
+
+int AVCALL avstor_lock_release(avstor *db);
+
+int AVCALL avstor_lock_upgrade(avstor *db);
+#endif
 
 #ifdef __cplusplus
 }
