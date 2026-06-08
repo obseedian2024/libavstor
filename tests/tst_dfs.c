@@ -325,12 +325,22 @@ dfs_thread_func_mt(void *param)
 {
     struct dfs_thread_param *p = (struct dfs_thread_param*)param;
     avstor_node parent;
-    int result;
+    int result, lock_result;
 
     avstor_thread_attach();
 
+    if (AVSTOR_OK != (lock_result = avstor_lock_acquire(p->db, AVSTOR_LOCK_SHARED))) {
+        avstest_print_err("avstor_lock_acquire", lock_result);
+        return 0;
+    }
     avstor_node_init(p->db, &parent);
-    result = dfs_traversal_proc(p->db, &parent, p->param, &p->actual_sum_values);
+    
+    result = dfs_traversal_proc(p->db, &parent, p->param, &p->actual_sum_values);   
+
+    if (AVSTOR_OK != (lock_result = avstor_lock_release(p->db))) {
+        avstest_print_err("avstor_lock_release", lock_result);
+        return 0;
+    }
 
     return result;
 }
