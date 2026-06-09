@@ -836,8 +836,9 @@ static int db_lock_shared(avstor *db)
 static int db_lock_exclusive(avstor *db)
 {
     if (thrd_equal(db->owner, thrd_current())) {
-        // We already own an exclusive lock so just return OK
-        return AVSTOR_OK;
+        // We already own an exclusive lock and recusion is not allowed.
+        fprintf(stderr, "libavstor: Attempt to obtain exclusive lock recursively.");
+        abort();
     }
 
     // Exclusive lock can only be obtained if no locks are being held
