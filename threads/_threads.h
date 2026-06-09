@@ -35,6 +35,12 @@
 // These are private declarations used by the modules that don't
 // need to be in threads.h
 
+#if defined(_MSC_VER) && _MSC_VER < 1200
+#define NORETURN
+#else
+#define NORETURN __declspec(noreturn)
+#endif
+
 #if defined(__OS2__)
 
 #undef _WIN32

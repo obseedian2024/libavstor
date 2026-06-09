@@ -39,12 +39,6 @@
 
 #include "stdatomic.h"
 
-#if defined(_MSC_VER) && _MSC_VER < 1200
-#define NORETURN
-#else
-#define NORETURN __declspec(noreturn)
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -137,7 +131,9 @@ thrd_t __cdecl thrd_current(void);
 int __cdecl thrd_detach(thrd_t thr);
 int __cdecl thrd_equal(thrd_t lhs, thrd_t rhs);
 
-NORETURN
+#if !defined(_MSC_VER) || _MSC_VER >= 1200
+__declspec(noreturn)
+#endif
 void __cdecl thrd_exit(int res);
 int __cdecl thrd_join(thrd_t thr, int* res);
 int __cdecl thrd_sleep(const struct timespec* duration, struct timespec* remaining);
