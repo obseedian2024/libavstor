@@ -858,6 +858,7 @@ static int db_lock_exclusive(avstor *db)
 //
 static int db_lock_upgrade(avstor *db)
 {
+    int tmp;
     // Someone is already trying to upgrade
     if (db->lock & 1) {
         RETURN(AVSTOR_DEADLOCK, "Would deadlock");
@@ -871,7 +872,7 @@ static int db_lock_upgrade(avstor *db)
         }
         else {
             // Other thread has exclusive lock, we can't upgrade that
-            RETURN(AVSTOR_INVOPER, "Not owner");
+            RETURN(AVSTOR_INVOPER, MSG_NOT_OWNER);
         }
     }
     if (db->lock == 0) {
@@ -881,12 +882,11 @@ static int db_lock_upgrade(avstor *db)
 
     // Lock can only be upgraded if there is exactly one shared lock
     // (assumed to be the current thread)
-    while (db->lock != 2) {
+    for (tmp = db->lock; tmp != 2; tmp = db->lock & ~1) {
         db->lock |= 1; // Set upgrade lock bit
         if (!avcnd_wait(&db->cv_upgr, &db->mtx)) {
             RETURN(AVSTOR_INTERNAL, "avcnd_wait failed");
         }
-        db->lock &= ~1;
     }
     db->lock = -2;
     db->owner = thrd_current();
