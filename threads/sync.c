@@ -309,7 +309,7 @@ int __cdecl cnd_wait(cnd_t *cond, mtx_t *mtx)
     // If all wakeups satisfied, block further waiters.
     if (cond->_wakeups == 0) {
         reset_event(&cond->_event);
-        }
+    }
 	mtx_unlock(&cond->_mtx);
 
     return thrd_success;
