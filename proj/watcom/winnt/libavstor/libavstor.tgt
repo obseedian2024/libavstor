@@ -63,7 +63,7 @@ WString
 COBJ
 16
 WVList
-19
+20
 17
 MVState
 18
@@ -77,8 +77,8 @@ WString
 1
 20
 WString
-27
-AVSTOR_CONFIG_THREAD_SAFE=1
+36
+AVSTOR_CONFIG_THREAD_SAFE=1 NDEBUG=1
 0
 21
 MCState
@@ -88,22 +88,22 @@ WString
 WCC
 23
 WString
-31
-?????Force enums to be type int
+34
+?????Change char default to signed
 1
 1
 24
-MRState
+MCState
 25
 WString
 3
 WCC
 26
 WString
-21
-?????Compiler default
+31
+?????Force enums to be type int
 1
-0
+1
 27
 MRState
 28
@@ -113,36 +113,36 @@ WCC
 29
 WString
 21
-?????8-byte alignment
+?????Compiler default
 1
-1
+0
 30
-MVState
+MRState
 31
 WString
 3
 WCC
 32
 WString
-19
-?????Other options:
+21
+?????8-byte alignment
+1
 1
 33
-WString
-24
--i="..\..\..\..\include"
-0
+MVState
 34
-MRState
-35
 WString
 3
 WCC
+35
+WString
+19
+?????Other options:
+1
 36
 WString
-21
-?????No optimizations
-1
+24
+-i="..\..\..\..\include"
 0
 37
 MRState
@@ -152,20 +152,20 @@ WString
 WCC
 39
 WString
-26
-?????Fastest possible code
+21
+?????No optimizations
 1
-1
+0
 40
-MCState
+MRState
 41
 WString
 3
 WCC
 42
 WString
-33
-?????Disable stack depth checking
+26
+?????Fastest possible code
 1
 1
 43
@@ -176,8 +176,8 @@ WString
 WCC
 45
 WString
-22
-?????Branch prediction
+33
+?????Disable stack depth checking
 1
 1
 46
@@ -188,8 +188,8 @@ WString
 WCC
 48
 WString
-23
-?????Loop optimizations
+22
+?????Branch prediction
 1
 1
 49
@@ -200,8 +200,8 @@ WString
 WCC
 51
 WString
-19
-?????Loop unrolling
+23
+?????Loop optimizations
 1
 1
 52
@@ -212,8 +212,8 @@ WString
 WCC
 54
 WString
-30
-?????Call/return optimizations
+19
+?????Loop unrolling
 1
 1
 55
@@ -224,8 +224,8 @@ WString
 WCC
 57
 WString
-32
-?????In-line intrinsic functions
+30
+?????Call/return optimizations
 1
 1
 58
@@ -236,8 +236,8 @@ WString
 WCC
 60
 WString
-27
-?????Instruction scheduling
+32
+?????In-line intrinsic functions
 1
 1
 61
@@ -248,37 +248,37 @@ WString
 WCC
 63
 WString
-33
-?????Allow repeated optimizations
+27
+?????Instruction scheduling
 1
 1
 64
-MVState
+MCState
 65
 WString
 3
 WCC
 66
 WString
-29
-?????Expand function in-line:
+33
+?????Allow repeated optimizations
+1
 1
 67
-WString
-2
-20
-1
+MVState
 68
-MRState
-69
 WString
 3
 WCC
-70
+69
 WString
 29
-?????No debugging information
+?????Expand function in-line:
 1
+70
+WString
+2
+20
 1
 71
 MRState
@@ -288,80 +288,92 @@ WString
 WCC
 73
 WString
-24
-?????Full debugging info
+29
+?????No debugging information
 1
-0
+1
 74
-MCState
+MRState
 75
 WString
 3
 WCC
 76
 WString
+24
+?????Full debugging info
+1
+0
+77
+MCState
+78
+WString
+3
+WCC
+79
+WString
 30
 n????Multithreaded application
 1
 1
-77
+80
 WVList
 0
 -1
 1
 1
 0
-78
+81
 MItem
 24
 ..\..\..\..\src\avstor.c
-79
+82
 WString
 4
 COBJ
-80
+83
 WVList
 0
-81
+84
 WVList
 0
 14
 1
 1
 0
-82
+85
 MItem
 3
 *.h
-83
+86
 WString
 3
 NIL
-84
+87
 WVList
 0
-85
+88
 WVList
 0
 -1
 1
 1
 0
-86
+89
 MItem
 28
 ..\..\..\..\include\avstor.h
-87
+90
 WString
 3
 NIL
-88
+91
 WVList
 0
-89
+92
 WVList
 0
-82
+85
 1
 1
 0
