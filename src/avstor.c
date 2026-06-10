@@ -1247,12 +1247,33 @@ static int io_commit(int fid)
 
 static int io_read(avstor *db, void *buf, avstor_off page_num, unsigned count)
 {
-    return pread(db->file, buf, count, (off_t)((int64_t)page_num * PAGE_SIZE));
+    ssize_t num;
+    const off_t pos = (off_t)((int64_t)page_num * PAGE_SIZE);
+
+    do {
+        num = pread(db->file, buf, count, pos);
+    } while (num == -1 && errno == EINTR);
+
+    return num;
 }
 
 static int io_write(avstor *db, const void *buf, avstor_off page_num, unsigned count)
 {
-    return pwrite(db->file, buf, count, (off_t)((int64_t)page_num * PAGE_SIZE));
+    ssize_t bytes = 0;
+    const off_t pos = (off_t)((int64_t)page_num * PAGE_SIZE);
+
+    while (bytes < count) {
+        ssize_t num = pwrite(db->file, PTR(buf, bytes), count - bytes, pos + bytes);
+        if (num == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        bytes += num;
+    }
+
+    return (int)bytes;
 }
 
 #else
