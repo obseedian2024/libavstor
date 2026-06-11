@@ -10,6 +10,10 @@ OS_NAME = $(shell uname -o)
 ifeq ($(OS_NAME), Cygwin)
 	EXE_EXT = .exe
 	LIB_EXT = .lib
+	# Allow threading to work correctly under Cygwin
+	ifeq ($(WIN32), 1)
+		CFLAGS += -mwin32
+	endif
 else
 # For mingw
 	ifeq ($(OS_NAME), MS/Windows)
@@ -40,6 +44,10 @@ ifeq ($(THREAD_SAFE), 1)
 	CFLAGS += -DAVSTOR_CONFIG_THREAD_SAFE=1
 	ifeq ($(HAS_NO_STDTHREADS), 0)
 		LDFLAGS += -lstdthreads
+	else
+		ifeq ($(OS_NAME), Cygwin)
+			LDFLAGS += -lpthread
+		endif
 	endif
 endif
 
