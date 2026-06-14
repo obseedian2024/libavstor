@@ -341,6 +341,10 @@ int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaini
         return -1;
     }
     else if (result == 0) {
+        if (remaining != NULL) {
+            remaining->tv_sec = 0;
+            remaining->tv_nsec = 0;
+        }
         return 0;
     }
     return -2;
