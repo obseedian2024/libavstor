@@ -897,13 +897,8 @@ void __cdecl call_once(once_flag *_flag, void(*_func)(void))
     }
     else if (cur < 0) {
         while (atomic_load(_flag) < 0) {
-#if defined(_WIN32)
-            Sleep(0);
-#elif defined(__OS2__)
-            DosSleep(0);
-#else
-            _cpu_pause();
-#endif
+            const struct timespec dur = { 0 };
+            thrd_sleep(&dur, NULL);
         }
     }
 }
