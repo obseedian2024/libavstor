@@ -51,6 +51,7 @@
 #endif
 
 #include <process.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -144,13 +145,39 @@ static void finalize_tls_data(struct _tld* tdata)
     mtx_unlock(&mtx_tls);
 }
 
+//
+// Calculates the difference between timespec values by subtracting ts2 from
+// ts1. If ts1 is earlier than ts2, result is set to zero. We won't return
+// negative values since with some compilers (i.e. Watcom), tv_sec is
+// unsigned.
+//
 static void timespec_diff(const struct timespec *ts1, const struct timespec *ts2, struct timespec *result)
 {
-    result->tv_sec = ts1->tv_sec - ts2->tv_sec;
-    result->tv_nsec = ts1->tv_nsec - ts2->tv_nsec;
-    if (result->tv_nsec < 0) {
-        result->tv_sec--;
-        result->tv_nsec += 1000000000L;
+    if (ts1->tv_sec > ts2->tv_sec || (ts1->tv_sec == ts2->tv_sec && ts1->tv_nsec > ts2->tv_nsec)) {
+        result->tv_sec = ts1->tv_sec - ts2->tv_sec;
+        result->tv_nsec = ts1->tv_nsec - ts2->tv_nsec;
+        if (result->tv_nsec < 0) {
+            result->tv_sec--;
+            result->tv_nsec += 1000000000L;
+        }
+    }
+    else {
+        result->tv_sec = 0;
+        result->tv_nsec = 0;
+    }
+}
+
+static uint32_t timespec_to_ms(const struct timespec *ts)
+{
+    if (ts->tv_sec > 4294967U) {
+        return 0xFFFFFFFFU;
+    }
+    else {
+        uint64_t ms = (uint64_t)ts->tv_sec * 1000U + (uint64_t)ts->tv_nsec / 1000000U;
+        if (ms > 0xFFFFFFFFU) {
+            ms = 0xFFFFFFFFU;
+        }
+        return (uint32_t)ms;
     }
 }
 
@@ -362,39 +389,43 @@ static void timespec_now(struct timespec *ts)
     ts->tv_nsec = (long)((ull.QuadPart % 10000000ULL) * 100);  /* 100ns -> ns */
 }
 
+static int os_sleep(const struct timespec *ts)
+{
+    DWORD result = SleepEx((DWORD)timespec_to_ms(ts), TRUE);
+    switch (result) {
+        case 0:                     return 0;
+        case WAIT_IO_COMPLETION:    return -1;
+        default:                    return -2;
+    }
+}
+
 int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaining)
 {
     struct timespec tm_start, tm_end;
-    DWORD result;
-    long ms = duration->tv_sec * 1000 + duration->tv_nsec / 1000000;
-    
+    int result;
+
+    if (duration->tv_nsec < 0) {
+        return -2;
+    }
+
     if (remaining != NULL) {
         timespec_now(&tm_start);
     }
+   
+    result = os_sleep(duration);
 
-    result = SleepEx((DWORD)ms, TRUE);
-
-    if (result == WAIT_IO_COMPLETION) {
-        if (remaining != NULL) {
+    if (remaining != NULL) {
+        if (result == -1) {
             timespec_now(&tm_end);
             timespec_diff(&tm_end, &tm_start, &tm_end);     // Actual sleeping time into tm_end
             timespec_diff(duration, &tm_end, remaining);    // subtract from duration to get remaining
-
-            if (remaining->tv_sec < 0 || (remaining->tv_sec == 0 && remaining->tv_nsec < 0)) {
-                remaining->tv_sec = 0;
-                remaining->tv_nsec = 0;
-            }
         }
-        return -1;
-    }
-    else if (result == 0) {
-        if (remaining != NULL) {
+        else if (result == 0) {
             remaining->tv_sec = 0;
             remaining->tv_nsec = 0;
         }
-        return 0;
     }
-    return -2;
+    return result;
 }
 
 void __cdecl thrd_yield(void)
