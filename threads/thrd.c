@@ -144,6 +144,16 @@ static void finalize_tls_data(struct _tld* tdata)
     mtx_unlock(&mtx_tls);
 }
 
+static void timespec_diff(const struct timespec *ts1, const struct timespec *ts2, struct timespec *result)
+{
+    result->tv_sec = ts1->tv_sec - ts2->tv_sec;
+    result->tv_nsec = ts1->tv_nsec - ts2->tv_nsec;
+    if (result->tv_nsec < 0) {
+        result->tv_sec--;
+        result->tv_nsec += 1000000000L;
+    }
+}
+
 #if defined(_WIN32)
 
 DWORD __key_tld;
@@ -328,15 +338,52 @@ int __cdecl thrd_join(thrd_t thr, int *res)
     }
 }
 
+/*
+ * Get current UTC system time as struct timespec.
+ * Works on Windows NT 3.51+ using GetSystemTimeAsFileTime (available since NT 3.5).
+ * Resolution is typically ~10 ms on NT 3.51 (system timer granularity), 
+ * but the function returns the best available time.
+ */
+static void timespec_now(struct timespec *ts)
+{
+    FILETIME ft;
+    ULARGE_INTEGER ull;
+
+    GetSystemTimeAsFileTime(&ft);
+
+    /* FILETIME = 100-nanosecond intervals since 1601-01-01 00:00:00 UTC */
+    ull.LowPart  = ft.dwLowDateTime;
+    ull.HighPart = ft.dwHighDateTime;
+
+    /* Convert to Unix epoch (1970-01-01) */
+    ull.QuadPart -= 11644473600ULL * 10000000ULL;  /* 11644473600 seconds * 10^7 */
+
+    ts->tv_sec  = (time_t)(ull.QuadPart / 10000000ULL);
+    ts->tv_nsec = (long)((ull.QuadPart % 10000000ULL) * 100);  /* 100ns -> ns */
+}
+
 int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaining)
 {
+    struct timespec tm_start, tm_end;
+    DWORD result;
     long ms = duration->tv_sec * 1000 + duration->tv_nsec / 1000000;
-    DWORD result = SleepEx((DWORD)ms, TRUE);
+    
+    if (remaining != NULL) {
+        timespec_now(&tm_start);
+    }
+
+    result = SleepEx((DWORD)ms, TRUE);
+
     if (result == WAIT_IO_COMPLETION) {
         if (remaining != NULL) {
-            // TODO: Fix this
-            remaining->tv_sec = 0;
-            remaining->tv_nsec = 0;
+            timespec_now(&tm_end);
+            timespec_diff(&tm_end, &tm_start, &tm_end);     // Actual sleeping time into tm_end
+            timespec_diff(duration, &tm_end, remaining);    // subtract from duration to get remaining
+
+            if (remaining->tv_sec < 0 || (remaining->tv_sec == 0 && remaining->tv_nsec < 0)) {
+                remaining->tv_sec = 0;
+                remaining->tv_nsec = 0;
+            }
         }
         return -1;
     }
@@ -804,14 +851,24 @@ int __cdecl thrd_join(thrd_t thr, int *res)
 
 int __cdecl thrd_sleep(const struct timespec* duration, struct timespec* remaining)
 {
-    long ms = duration->tv_sec * 1000 + duration->tv_nsec / 1000000;
-    unsigned result = DosSleep(ms) == NO_ERROR ? 0 : -1;
-    if (result && remaining) {
-        // TODO: Fix me
-        remaining->tv_sec = 0;
-        remaining->tv_nsec = 0;
+    const long ms = duration->tv_sec * 1000 + duration->tv_nsec / 1000000;
+    unsigned result = DosSleep(ms);
+    if (result == ERROR_TS_WAKEUP) {
+        if (remaining != NULL) {
+            // TODO: Fix this
+            remaining->tv_sec = 0;
+            remaining->tv_nsec = 0;
+        }
+        return -1;
     }
-    return result;
+    else if (result == NO_ERROR) {
+        if (remaining != NULL) {
+            remaining->tv_sec = 0;
+            remaining->tv_nsec = 0;
+        }
+        return 0;
+    }
+    return -2;
 }
 
 void __cdecl thrd_yield(void)
