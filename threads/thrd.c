@@ -399,35 +399,6 @@ static int os_sleep(const struct timespec *ts)
     }
 }
 
-int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaining)
-{
-    struct timespec tm_start, tm_end;
-    int result;
-
-    if (duration->tv_nsec < 0) {
-        return -2;
-    }
-
-    if (remaining != NULL) {
-        timespec_now(&tm_start);
-    }
-   
-    result = os_sleep(duration);
-
-    if (remaining != NULL) {
-        if (result == -1) {
-            timespec_now(&tm_end);
-            timespec_diff(&tm_end, &tm_start, &tm_end);     // Actual sleeping time into tm_end
-            timespec_diff(duration, &tm_end, remaining);    // subtract from duration to get remaining
-        }
-        else if (result == 0) {
-            remaining->tv_sec = 0;
-            remaining->tv_nsec = 0;
-        }
-    }
-    return result;
-}
-
 void __cdecl thrd_yield(void)
 {
 #if _WIN32_WINNT >= 0x0400
@@ -880,26 +851,47 @@ int __cdecl thrd_join(thrd_t thr, int *res)
     }
 }
 
-int __cdecl thrd_sleep(const struct timespec* duration, struct timespec* remaining)
+//
+// Get current UTC time for OS/2
+//
+static void timespec_now(struct timespec *ts)
 {
-    const long ms = duration->tv_sec * 1000 + duration->tv_nsec / 1000000;
-    unsigned result = DosSleep(ms);
-    if (result == ERROR_TS_WAKEUP) {
-        if (remaining != NULL) {
-            // TODO: Fix this
-            remaining->tv_sec = 0;
-            remaining->tv_nsec = 0;
-        }
-        return -1;
+    struct tm tm = { 0 };
+    DATETIME dt;
+    time_t utc_sec;
+
+    DosGetDateTime(&dt);
+
+    /* Build broken-down time (local) */
+    tm.tm_year  = dt.year - 1900;   /* years since 1900 */
+    tm.tm_mon   = dt.month - 1;     /* 0..11 */
+    tm.tm_mday  = dt.day;           /* 1..31 */
+    tm.tm_hour  = dt.hours;
+    tm.tm_min   = dt.minutes;
+    tm.tm_sec   = dt.seconds;
+    tm.tm_isdst = -1;                /* let mktime figure out DST */
+
+    /* Convert local time to UTC timestamp (seconds since epoch) */
+    utc_sec = mktime(&tm);
+    if (utc_sec == (time_t)-1) {
+        fprintf(stderr, "mktime failed\n");
+        abort();
     }
-    else if (result == NO_ERROR) {
-        if (remaining != NULL) {
-            remaining->tv_sec = 0;
-            remaining->tv_nsec = 0;
-        }
-        return 0;
+    /* Adjust for OS/2 timezone offset (minutes west of UTC) */
+    utc_sec -= (time_t)(dt.timezone * 60);   /* subtract offset to get UTC */
+
+    /* Set timespec */
+    ts->tv_sec  = utc_sec;
+    ts->tv_nsec = (long)dt.hundredths * 10000000L;  /* 0.01s -> nanoseconds */
+}
+
+static int os_sleep(const struct timespec *ts)
+{
+    switch (DosSleep((ULONG)timespec_to_ms(ts))) {
+        case NO_ERROR:              return 0;
+        case ERROR_TS_WAKEUP:       return -1;
+        default:                    return -2;
     }
-    return -2;
 }
 
 void __cdecl thrd_yield(void)
@@ -908,6 +900,35 @@ void __cdecl thrd_yield(void)
 }
 
 #endif
+
+int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaining)
+{
+    struct timespec tm_start, tm_end;
+    int result;
+
+    if (duration->tv_nsec < 0) {
+        return -2;
+    }
+
+    if (remaining != NULL) {
+        timespec_now(&tm_start);
+    }
+   
+    result = os_sleep(duration);
+
+    if (remaining != NULL) {
+        if (result == -1) {
+            timespec_now(&tm_end);
+            timespec_diff(&tm_end, &tm_start, &tm_end);     // Actual sleeping time into tm_end
+            timespec_diff(duration, &tm_end, remaining);    // subtract from duration to get remaining
+        }
+        else if (result == 0) {
+            remaining->tv_sec = 0;
+            remaining->tv_nsec = 0;
+        }
+    }
+    return result;
+}
 
 int __cdecl tss_create(tss_t *tss_key, tss_dtor_t destructor)
 {
