@@ -39,7 +39,13 @@
 #define INCL_DOS
 #define INCL_DOSERRORS
 #define INCL_DOSPROCESS
+#define INCL_LONGLONG
 #include <os2.h>
+
+// 16-bit OS/2 headers don't define ULONGLONG
+#if defined(_M_I86)
+typedef unsigned long long ULONGLONG;
+#endif
 
 #include <string.h>
 
@@ -51,7 +57,6 @@
 #endif
 
 #include <process.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -167,17 +172,17 @@ static void timespec_diff(const struct timespec *ts1, const struct timespec *ts2
     }
 }
 
-static uint32_t timespec_to_ms(const struct timespec *ts)
+static ULONG timespec_to_ms(const struct timespec *ts)
 {
     if (ts->tv_sec > 4294967U) {
         return 0xFFFFFFFFU;
     }
     else {
-        uint64_t ms = (uint64_t)ts->tv_sec * 1000U + (uint64_t)ts->tv_nsec / 1000000U;
+        ULONGLONG ms = (ULONGLONG)ts->tv_sec * 1000U + (ULONGLONG)ts->tv_nsec / 1000000U;
         if (ms > 0xFFFFFFFFU) {
             ms = 0xFFFFFFFFU;
         }
-        return (uint32_t)ms;
+        return (ULONG)ms;
     }
 }
 
@@ -391,8 +396,7 @@ static void timespec_now(struct timespec *ts)
 
 static int os_sleep(const struct timespec *ts)
 {
-    DWORD result = SleepEx((DWORD)timespec_to_ms(ts), TRUE);
-    switch (result) {
+    switch (SleepEx((DWORD)timespec_to_ms(ts), TRUE)) {
         case 0:                     return 0;
         case WAIT_IO_COMPLETION:    return -1;
         default:                    return -2;
@@ -887,7 +891,7 @@ static void timespec_now(struct timespec *ts)
 
 static int os_sleep(const struct timespec *ts)
 {
-    switch (DosSleep((ULONG)timespec_to_ms(ts))) {
+    switch (DosSleep(timespec_to_ms(ts))) {
         case NO_ERROR:              return 0;
         case ERROR_TS_WAKEUP:       return -1;
         default:                    return -2;
@@ -903,7 +907,7 @@ void __cdecl thrd_yield(void)
 
 int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaining)
 {
-    struct timespec tm_start, tm_end;
+    struct timespec ts_start, ts_end;
     int result;
 
     if (duration->tv_nsec < 0) {
@@ -911,16 +915,16 @@ int __cdecl thrd_sleep(const struct timespec *duration, struct timespec *remaini
     }
 
     if (remaining != NULL) {
-        timespec_now(&tm_start);
+        timespec_now(&ts_start);
     }
    
     result = os_sleep(duration);
 
     if (remaining != NULL) {
         if (result == -1) {
-            timespec_now(&tm_end);
-            timespec_diff(&tm_end, &tm_start, &tm_end);     // Actual sleeping time into tm_end
-            timespec_diff(duration, &tm_end, remaining);    // subtract from duration to get remaining
+            timespec_now(&ts_end);
+            timespec_diff(&ts_end, &ts_start, &ts_end);     // Actual sleeping time into ts_end
+            timespec_diff(duration, &ts_end, remaining);    // subtract from duration to get remaining
         }
         else if (result == 0) {
             remaining->tv_sec = 0;
